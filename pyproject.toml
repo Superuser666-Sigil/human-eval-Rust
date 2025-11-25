@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-eval-rust"
-version = "1.1.1"
+version = "1.1.2"
 description = "Evaluation harness for the HumanEval Rust problem solving dataset"
 readme = "README.md"
 requires-python = ">=3.12.10"
@@ -30,6 +30,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "fire>=0.5.0",
     "numpy>=1.24.0",
+    "termcolor>=3.2.0",
 ]
 
 [project.optional-dependencies]
