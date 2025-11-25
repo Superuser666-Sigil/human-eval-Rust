@@ -220,13 +220,18 @@ DISALLOWED_COMPLETION_PATTERNS = [
 def _sanitize_rust_completion(completion: str) -> Optional[str]:
     lowered_completion = completion.lower()
     for pattern in DISALLOWED_COMPLETION_PATTERNS:
-        if pattern in lowered_completion:
+        if pattern.lower() in lowered_completion:
             return f"disallowed usage of {pattern}"
     return None
 
 
 def _rust_unsafe_execute(
-    problem: Dict, completion: str, timeout: float, result, sandbox_mode: Optional[str] = None
+    problem: Dict,
+    completion: str,
+    timeout: float,
+    result,
+    sandbox_mode: Optional[str] = None,
+    enforce_policy: bool = True,
 ):
     with create_tempdir() as temp_dir:
         import shutil
@@ -240,10 +245,12 @@ def _rust_unsafe_execute(
         subprocess.Popen = popen
 
         try:
-            violation = _sanitize_rust_completion(completion)
-            if violation:
-                result.append(f"failed: {violation}")
-                return
+            # Policy enforcement (pattern filtering) - can be disabled for pure HumanEval compatibility
+            if enforce_policy:
+                violation = _sanitize_rust_completion(completion)
+                if violation:
+                    result.append(f"failed: {violation}")
+                    return
 
             source_path = os.path.join(temp_dir, "solution.rs")
             test_binary = os.path.join(temp_dir, "solution_test")
@@ -336,6 +343,7 @@ def rust_check_correctness(
     timeout: float,
     completion_id: Optional[int] = None,
     sandbox_mode: Optional[str] = None,
+    enforce_policy: bool = True,
 ) -> Dict:
     """
     Evaluate a Rust completion by compiling and running its tests.
@@ -346,6 +354,8 @@ def rust_check_correctness(
         timeout: Timeout in seconds
         completion_id: Optional completion ID for tracking
         sandbox_mode: Optional sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+        enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
+            Set to False for pure HumanEval compatibility without security filtering.
     
     Returns:
         Dictionary with task_id, passed, result, and completion_id
@@ -356,7 +366,7 @@ def rust_check_correctness(
 
     process = multiprocessing.Process(
         target=_rust_unsafe_execute,
-        args=(problem, completion, timeout, result, sandbox_mode),
+        args=(problem, completion, timeout, result, sandbox_mode, enforce_policy),
     )
     process.start()
     process.join(timeout=timeout + 1)

@@ -16,6 +16,7 @@ def check_correctness(
     completion_id: Optional[int] = None,
     language: Optional[str] = None,
     sandbox_mode: Optional[str] = None,
+    enforce_policy: bool = True,
 ) -> Dict:
     """
     Evaluates the functional correctness of a Rust completion by compiling
@@ -24,13 +25,15 @@ def check_correctness(
     :param completion_id: an optional completion ID so we can match
         the results later even if execution finishes asynchronously.
     :param sandbox_mode: Optional sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+    :param enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
+        Set to False for pure HumanEval compatibility without security filtering.
     """
     # Language parameter is kept for API compatibility but only Rust is supported
     if language and language.lower() != "rust":
         raise ValueError(f"Only Rust is supported. Got language: {language}")
 
     return rust_execution.rust_check_correctness(
-        problem, completion, timeout, completion_id, sandbox_mode
+        problem, completion, timeout, completion_id, sandbox_mode, enforce_policy
     )
 
 

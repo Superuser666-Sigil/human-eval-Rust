@@ -58,10 +58,22 @@ def evaluate_functional_correctness(
     problem_file: Optional[str] = None,
     language: Optional[str] = None,
     sandbox_mode: Optional[str] = None,
+    enforce_policy: bool = True,
 ):
     """
     Evaluates the functional correctness of generated samples, and writes
-    results to f"{sample_file}_results.jsonl.gz"
+    results to f"{sample_file}_results.jsonl" (one JSON object per sample result).
+    
+    Args:
+        sample_file: Path to JSONL file with completions
+        k: List of pass@k values to compute
+        n_workers: Number of parallel workers
+        timeout: Per-sample timeout in seconds
+        problem_file: Optional problem dataset file
+        language: Language (only "rust" supported)
+        sandbox_mode: Sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+        enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
+            Set to False for pure HumanEval compatibility without security filtering.
     """
 
     if problem_file is None:
@@ -97,6 +109,7 @@ def evaluate_functional_correctness(
                 completion_id[task_id],
                 resolved_language,
                 sandbox_mode,
+                enforce_policy,
             )
             future = executor.submit(check_correctness, *args)
             futures.append(future)

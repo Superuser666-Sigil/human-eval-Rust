@@ -15,6 +15,7 @@ def entry_point(
     problem_file: Optional[str] = None,
     language: Optional[str] = None,
     sandbox_mode: Optional[str] = None,
+    enforce_policy: bool = True,
 ):
     """
     Evaluate HumanEval Rust completions and write a "<input>_results.jsonl"
@@ -32,6 +33,9 @@ def entry_point(
         If not provided, defaults to "rust".
       sandbox_mode: Sandbox mode ("docker", "firejail", "none", or None for auto-detect).
         Docker is recommended for production use. None auto-detects available sandbox.
+      enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
+        Set to False for pure HumanEval compatibility without security filtering.
+        Use --no-enforce-policy to disable policy enforcement.
     """
     k = list(map(int, k.split(",")))
     if problem_file is None:
@@ -69,6 +73,7 @@ def entry_point(
         problem_file,
         language,
         sandbox_mode,
+        enforce_policy,
     )
     print(results)
 

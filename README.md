@@ -191,6 +191,10 @@ evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail
 evaluate_functional_correctness samples.jsonl --sandbox-mode=auto  # Auto-detect (default)
 evaluate_functional_correctness samples.jsonl --sandbox-mode=none  # UNSAFE: local dev only
 
+# Policy enforcement (pattern filtering)
+evaluate_functional_correctness samples.jsonl --enforce-policy  # Default: enabled
+evaluate_functional_correctness samples.jsonl --no-enforce-policy  # Disable for pure HumanEval compatibility
+
 # See all options
 evaluate_functional_correctness --help
 ```
@@ -201,9 +205,13 @@ evaluate_functional_correctness --help
 
 The evaluator includes multiple layers of security:
 
-1. **Pattern-based filtering**: Blocks dangerous code patterns before execution (filesystem, network, process operations, unsafe code, etc.)
+1. **Pattern-based filtering** (optional, enabled by default): Blocks dangerous code patterns before execution (filesystem, network, process operations, unsafe code, etc.). Can be disabled with `--no-enforce-policy` for pure HumanEval compatibility.
 2. **Process isolation**: Each evaluation runs in a separate process
 3. **Docker/Firejail sandboxing** (recommended): Full container/jail isolation with resource limits
+
+**Policy Enforcement Modes**:
+- `--enforce-policy` (default): Enables pattern-based filtering for security. Use this for production evaluation of untrusted LLM-generated code.
+- `--no-enforce-policy`: Disables pattern filtering for pure HumanEval compatibility. Use this when you need exact 1:1 comparability with the original HumanEval benchmark format (research/publication mode).
 
 **Sandbox Modes**:
 - `docker` (recommended): Uses Docker containers with `--network=none`, read-only filesystem, memory/CPU limits

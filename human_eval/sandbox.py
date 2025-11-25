@@ -8,6 +8,7 @@ Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -393,6 +394,7 @@ def run_rustc_sandboxed(
         SandboxError: If sandboxing is required but unavailable
     """
     # Auto-detect sandbox mode if not specified
+    auto_mode = sandbox_mode is None
     if sandbox_mode is None:
         if check_docker_available():
             sandbox_mode = "docker"
@@ -400,6 +402,13 @@ def run_rustc_sandboxed(
             sandbox_mode = "firejail"
         else:
             sandbox_mode = "none"
+            if auto_mode:
+                print(
+                    "[WARNING] sandbox-mode=auto resolved to 'none' "
+                    "(no Docker or Firejail detected). "
+                    "Untrusted completions will run UNSANDBOXED.",
+                    file=sys.stderr,
+                )
     
     if sandbox_mode == "docker":
         return run_rustc_in_docker(source_file, output_binary, command_args, timeout, capture_output)
@@ -440,6 +449,7 @@ def run_binary_sandboxed(
         SandboxError: If sandboxing is required but unavailable
     """
     # Auto-detect sandbox mode if not specified
+    auto_mode = sandbox_mode is None
     if sandbox_mode is None:
         if check_docker_available():
             sandbox_mode = "docker"
@@ -447,6 +457,13 @@ def run_binary_sandboxed(
             sandbox_mode = "firejail"
         else:
             sandbox_mode = "none"
+            if auto_mode:
+                print(
+                    "[WARNING] sandbox-mode=auto resolved to 'none' "
+                    "(no Docker or Firejail detected). "
+                    "Untrusted completions will run UNSANDBOXED.",
+                    file=sys.stderr,
+                )
     
     if sandbox_mode == "docker":
         return run_binary_in_docker(binary_path, timeout, capture_output)
