@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-eval-rust"
-version = "1.0.1"
+version = "1.1.0"
 description = "Evaluation harness for the HumanEval Rust problem solving dataset"
 readme = "README.md"
 requires-python = ">=3.12.10"
@@ -34,8 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ecosystem = [
-    "sigil-pipeline>=1.1.0",
-    "sigilderg-finetuner>=2.7.2",
+    "sigil-pipeline>=1.2.0",
+    "sigilderg-finetuner>=2.8.0",
 ]
 dev = [
     "pytest>=7.4.0",
