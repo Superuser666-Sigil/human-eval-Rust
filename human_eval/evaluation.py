@@ -138,6 +138,7 @@ def evaluate_functional_correctness(
                  for k in ks if (total >= k).all()}
 
     # Finally, save the results in one file:
+    # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
     def combine_results():
         for sample in stream_jsonl(sample_file):
             task_id = sample["task_id"]

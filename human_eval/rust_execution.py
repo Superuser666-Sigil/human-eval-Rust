@@ -265,6 +265,8 @@ def _rust_unsafe_execute(
             compile_args = ["--edition=2021", "--test"]
 
             # Use sandboxing if available and requested
+            # Note: sandbox_mode=None (explicit) means no sandboxing - this is intentional
+            # for library users who want direct control. CLI auto-detects when None.
             use_sandbox = (
                 SANDBOX_AVAILABLE
                 and sandbox_mode is not None
