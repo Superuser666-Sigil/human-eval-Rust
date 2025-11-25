@@ -1,94 +1,33 @@
 import contextlib
 import faulthandler
-import io
-import multiprocessing
 import os
 import platform
 import signal
 import tempfile
 from typing import Dict, Optional
 
-
-def unsafe_execute(problem: Dict, completion: str, timeout: float, result):
-    with create_tempdir():
-
-        # These system calls are needed when cleaning up tempdir.
-        import os
-        import shutil
-
-        rmtree = shutil.rmtree
-        rmdir = os.rmdir
-        chdir = os.chdir
-
-        # Disable functionalities that can make destructive changes to the test.
-        reliability_guard()
-
-        # Construct the check program and run it.
-        check_program = (
-            problem["prompt"]
-            + completion
-            + "\n"
-            + problem["test"]
-            + "\n"
-            + f"check({problem['entry_point']})"
-        )
-
-        try:
-            exec_globals = {}
-            with swallow_io():
-                with time_limit(timeout):
-                    # WARNING
-                    # This program exists to execute untrusted model-generated code. Although
-                    # it is highly unlikely that model-generated code will do something overtly
-                    # malicious in response to this test suite, model-generated code may act
-                    # destructively due to a lack of model capability or alignment.
-                    # Users are strongly encouraged to sandbox this evaluation suite so that it
-                    # does not perform destructive actions on their host or network. For more
-                    # information on how OpenAI sandboxes its code, see the accompanying paper.
-                    # Once you have read this disclaimer and taken appropriate precautions,
-                    # uncomment the following line and proceed at your own risk:
-                    exec(check_program, exec_globals)
-            result.append("passed")
-        except TimeoutException:
-            result.append("timed out")
-        except BaseException as e:
-            result.append(f"failed: {e}")
-
-        # Needed for cleaning up.
-        shutil.rmtree = rmtree
-        os.rmdir = rmdir
-        os.chdir = chdir
+from human_eval import rust_execution
 
 
 def check_correctness(
-    problem: Dict, completion: str, timeout: float, completion_id: Optional[int] = None
+    problem: Dict,
+    completion: str,
+    timeout: float,
+    completion_id: Optional[int] = None,
+    language: Optional[str] = None,
 ) -> Dict:
     """
-    Evaluates the functional correctness of a completion by running the test
-    suite provided in the problem.
+    Evaluates the functional correctness of a Rust completion by compiling
+    and running the test suite provided in the problem.
 
     :param completion_id: an optional completion ID so we can match
         the results later even if execution finishes asynchronously.
     """
+    # Language parameter is kept for API compatibility but only Rust is supported
+    if language and language.lower() != "rust":
+        raise ValueError(f"Only Rust is supported. Got language: {language}")
 
-    manager = multiprocessing.Manager()
-    result = manager.list()
-
-    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result))
-    p.start()
-    p.join(timeout=timeout + 1)
-    if p.is_alive():
-        p.kill()
-
-    if not result:
-        result.append("timed out")
-
-    return dict(
-        task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
-        completion_id=completion_id,
-    )
+    return rust_execution.rust_check_correctness(problem, completion, timeout, completion_id)
 
 
 @contextlib.contextmanager
@@ -105,44 +44,18 @@ def time_limit(seconds: float):
 
 
 @contextlib.contextmanager
-def swallow_io():
-    stream = WriteOnlyStringIO()
-    with contextlib.redirect_stdout(stream):
-        with contextlib.redirect_stderr(stream):
-            with redirect_stdin(stream):
-                yield
-
-
-@contextlib.contextmanager
 def create_tempdir():
+    original_unlink = os.unlink
+    original_rmdir = os.rmdir
     with tempfile.TemporaryDirectory() as dirname:
         with chdir(dirname):
             yield dirname
+        os.unlink = original_unlink
+        os.rmdir = original_rmdir
 
 
 class TimeoutException(Exception):
     pass
-
-
-class WriteOnlyStringIO(io.StringIO):
-    """StringIO that throws an exception when it's read from"""
-
-    def read(self, *args, **kwargs):
-        raise IOError
-
-    def readline(self, *args, **kwargs):
-        raise IOError
-
-    def readlines(self, *args, **kwargs):
-        raise IOError
-
-    def readable(self, *args, **kwargs):
-        """Returns True if the IO object can be read."""
-        return False
-
-
-class redirect_stdin(contextlib._RedirectStream):  # type: ignore
-    _stream = "stdin"
 
 
 @contextlib.contextmanager

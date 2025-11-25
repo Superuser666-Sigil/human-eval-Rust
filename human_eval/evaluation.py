@@ -1,12 +1,14 @@
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Union, Iterable, Dict
+from typing import List, Union, Iterable, Dict, Optional
 import itertools
 
 import numpy as np
 import tqdm
 
-from human_eval.data import HUMAN_EVAL, read_problems, stream_jsonl, write_jsonl
+import os
+
+from human_eval.data import get_human_eval_dataset, read_problems, stream_jsonl, write_jsonl
 from human_eval.execution import check_correctness
 
 
@@ -36,17 +38,35 @@ def estimate_pass_at_k(
     return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
 
 
+def _resolve_language(language: Optional[str], problem_file: str) -> str:
+    """
+    Resolves the language for evaluation. Only Rust is supported.
+    """
+    if language and language.lower() != "rust":
+        raise ValueError(
+            f"Only Rust is supported. Got language: {language}. "
+            "This evaluator only supports Rust code evaluation."
+        )
+    return "rust"
+
+
 def evaluate_functional_correctness(
     sample_file: str,
     k: List[int] = [1, 10, 100],
     n_workers: int = 4,
     timeout: float = 3.0,
-    problem_file: str = HUMAN_EVAL,
+    problem_file: Optional[str] = None,
+    language: Optional[str] = None,
 ):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"
     """
+
+    if problem_file is None:
+        problem_file = get_human_eval_dataset(language or "rust")
+
+    resolved_language = _resolve_language(language, problem_file)
 
     problems = read_problems(problem_file)
 
@@ -61,8 +81,21 @@ def evaluate_functional_correctness(
         print("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(sample_file)):
             task_id = sample["task_id"]
+            problem = problems.get(task_id)
+
+            if problem is None:
+                raise KeyError(
+                    f"Unknown task_id '{task_id}' in {sample_file}."
+                )
+
             completion = sample["completion"]
-            args = (problems[task_id], completion, timeout, completion_id[task_id])
+            args = (
+                problem,
+                completion,
+                timeout,
+                completion_id[task_id],
+                resolved_language,
+            )
             future = executor.submit(check_correctness, *args)
             futures.append(future)
             completion_id[task_id] += 1

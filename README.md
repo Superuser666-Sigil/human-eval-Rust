@@ -1,59 +1,64 @@
-# HumanEval: Hand-Written Evaluation Set 
+# HumanEval Rust: Hand-Written Evaluation Set
 
-This is an evaluation harness for the HumanEval problem solving dataset
-described in the paper "[Evaluating Large Language Models Trained on
-Code](https://arxiv.org/abs/2107.03374)".
+This is an evaluation harness for the HumanEval Rust problem solving dataset,
+based on the original HumanEval dataset described in the paper "[Evaluating Large
+Language Models Trained on Code](https://arxiv.org/abs/2107.03374)".
 
 ## Installation
 
-Make sure to use python 3.7 or later:
+Make sure to use Python 3.7 or later:
 ```
-$ conda create -n codex python=3.7
-$ conda activate codex
+$ conda create -n human-eval-rust python=3.7
+$ conda activate human-eval-rust
+```
+
+Install a Rust toolchain via [`rustup`](https://www.rust-lang.org/tools/install) and ensure a modern compiler with Edition 2021 support (Rust 1.56+; we recommend the latest stable toolchain):
+```
+$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+$ rustup default stable
+$ rustc --version
 ```
 
 Check out and install this repository:
 ```
-$ git clone https://github.com/openai/human-eval
-$ pip install -e human-eval
+$ git clone <repository-url>
+$ pip install -e .
 ```
 
 ## Usage
 
-**This program exists to run untrusted model-generated code. Users are strongly
-encouraged not to do so outside of a robust security sandbox. The [execution
-call](https://github.com/openai/human-eval/blob/master/human_eval/execution.py#L48-L58)
-in `execution.py` is deliberately commented out to ensure users read this
-disclaimer before running code in a potentially unsafe manner. See the comment in
-`execution.py` for more information and instructions.**
+**This program exists to run untrusted model-generated Rust code. Users are strongly
+encouraged not to do so outside of a robust security sandbox. Rust completions are
+compiled and executed via [`rust_execution.py`](human_eval/rust_execution.py);
+you should sandbox the Rust evaluator, because it builds binaries from untrusted
+code and runs their tests locally.**
 
-After following the above instructions to enable execution, generate samples
-and save them in the following JSON Lines (jsonl) format, where each sample is
-formatted into a single line like so:
+After following the above instructions, generate samples and save them in the
+following JSON Lines (jsonl) format, where each sample is formatted into a single
+line like so:
 ```
 {"task_id": "Corresponding HumanEval task ID", "completion": "Completion only without the prompt"}
 ```
-We provide `example_problem.jsonl` and `example_solutions.jsonl` under `data`
-to illustrate the format and help with debugging.
 
-Here is nearly functional example code (you just have to provide
-`generate_one_completion` to make it work) that saves generated completions to
-`samples.jsonl`.
+We provide `example_rust_problem.jsonl` and `example_rust_samples.jsonl` under
+`data` to illustrate the format and help with debugging.
+
+You can read the Rust prompts from `data/HumanEval_rust.jsonl` (or via
+`get_human_eval_dataset()`) and write completions back out to JSONL. Here is a
+short example:
 ```
-from human_eval.data import write_jsonl, read_problems
+from human_eval.data import read_problems, write_jsonl, get_human_eval_dataset
 
-problems = read_problems()
+rust_problems = read_problems(get_human_eval_dataset())
 
-num_samples_per_task = 200
 samples = [
-    dict(task_id=task_id, completion=generate_one_completion(problems[task_id]["prompt"]))
-    for task_id in problems
-    for _ in range(num_samples_per_task)
+    dict(task_id=task_id, completion=generate_one_completion(rust_problems[task_id]["prompt"]))
+    for task_id in rust_problems
 ]
-write_jsonl("samples.jsonl", samples)
+write_jsonl("rust_samples.jsonl", samples)
 ```
 
-To evaluate the samples, run
+To evaluate the samples, run:
 ```
 $ evaluate_functional_correctness samples.jsonl
 Reading samples...
@@ -64,31 +69,41 @@ Writing results to samples.jsonl_results.jsonl...
 100%|...| 32800/32800 [00:00<00:00, 42876.84it/s]
 {'pass@1': ..., 'pass@10': ..., 'pass@100': ...}
 ```
+
 This script provides more fine-grained information in a new file ending in
 `<input_path>_results.jsonl`. Each row now contains whether the completion
 `passed` along with the execution `result` which is one of "passed", "timed
 out", or "failed".
 
-As a quick sanity-check, the example samples should yield 0.5 pass@1.
+As a quick sanity-check, the example samples should yield 0.5 pass@1:
 ```
-$ evaluate_functional_correctness data/example_samples.jsonl --problem_file=data/example_problem.jsonl
+$ evaluate_functional_correctness data/example_rust_samples.jsonl --problem_file=data/example_rust_problem.jsonl
 Reading samples...
-6it [00:00, 3397.11it/s]
-Running example suites...
-100%|...| 6/6 [00:03<00:00,  1.96it/s]
-Writing results to data/example_samples.jsonl_results.jsonl...
-100%|...| 6/6 [00:00<00:00, 6148.50it/s]
-{'pass@1': 0.4999999999999999}
+4it [00:00, 1959.50it/s]
+Running test suites...
+100%|...| 4/4 [00:03<00:00,  1.13it/s]
+Writing results to data/example_rust_samples.jsonl_results.jsonl...
+100%|...| 4/4 [00:00<00:00, 1536.38it/s]
+{'pass@1': 0.5}
 ```
 
 Because there is no unbiased way of estimating pass@k when there are fewer
 samples than k, the script does not evaluate pass@k for these cases. To
 evaluate with other k values, pass `--k=<comma-separated-values-here>`. For
-other options, see
+other options, see:
 ```
 $ evaluate_functional_correctness --help
 ```
+
 However, we recommend that you use the default values for the rest.
+
+The Rust dataset lives at `data/HumanEval_rust.jsonl`. You can reference this
+path directly or let the evaluator use it as the default.
+
+Example invocation:
+```
+$ evaluate_functional_correctness data/example_rust_samples.jsonl --problem_file=data/example_rust_problem.jsonl
+```
 
 ## Known Issues
 

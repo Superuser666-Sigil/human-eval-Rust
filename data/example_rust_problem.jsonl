@@ -1,0 +1,1 @@
+{"task_id": "test_rust/0", "prompt": "fn return_one() -> i32 {\n", "canonical_solution": "    1\n}\n", "test": "\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_return_one() {\n        assert_eq!(return_one(), 1);\n    }\n}\n", "entry_point": "return_one"}

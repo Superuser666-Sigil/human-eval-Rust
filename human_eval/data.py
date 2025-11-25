@@ -1,14 +1,29 @@
-from typing import Iterable, Dict
+from typing import Iterable, Dict, Optional
 import gzip
 import json
 import os
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-HUMAN_EVAL = os.path.join(ROOT, "..", "data", "HumanEval.jsonl.gz")
+HUMAN_EVAL_RUST = os.path.join(ROOT, "..", "data", "HumanEval_rust.jsonl")
 
 
-def read_problems(evalset_file: str = HUMAN_EVAL) -> Dict[str, Dict]:
+def get_human_eval_dataset(language: Optional[str] = None) -> str:
+    """
+    Returns the path to the Rust HumanEval dataset.
+    Language parameter is kept for API compatibility but only Rust is supported.
+    """
+    if language and language.lower() != "rust":
+        raise ValueError(f"Only Rust is supported. Got language: {language}")
+    return HUMAN_EVAL_RUST
+
+
+def read_problems(evalset_file: Optional[str] = None) -> Dict[str, Dict]:
+    """
+    Reads problems from the specified file, or defaults to the Rust dataset.
+    """
+    if evalset_file is None:
+        evalset_file = HUMAN_EVAL_RUST
     return {task["task_id"]: task for task in stream_jsonl(evalset_file)}
 
 

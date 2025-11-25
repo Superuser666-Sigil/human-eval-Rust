@@ -1,0 +1,4 @@
+{"task_id": "test_rust/0", "completion": "    1\n}\n"}
+{"task_id": "test_rust/0", "completion": "    0\n}\n"}
+{"task_id": "test_rust/0", "completion": "    2\n}\n"}
+{"task_id": "test_rust/0", "completion": "    let mut value = 0;\n    for _ in 0..1 {\n        value += 1;\n    }\n    value\n}\n"}
