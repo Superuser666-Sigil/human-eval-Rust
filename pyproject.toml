@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "human-eval-rust"
+version = "1.0.0"
+description = "Evaluation harness for the HumanEval Rust problem solving dataset"
+readme = "README.md"
+requires-python = ">=3.12.10"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenAI"},
+]
+keywords = ["evaluation", "rust", "code", "llm", "benchmark"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "tqdm>=4.65.0",
+    "fire>=0.5.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+evaluate_functional_correctness = "human_eval.evaluate_functional_correctness:main"
+
+[tool.setuptools]
+packages = ["human_eval"]
+
+[tool.setuptools.package-data]
+"*" = ["../data/*.jsonl"]
+

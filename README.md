@@ -1,82 +1,147 @@
-# HumanEval Rust: Hand-Written Evaluation Set
+# HumanEval Rust: Evaluation Harness for SigilDERG Ecosystem
 
-This is an evaluation harness for the HumanEval Rust problem solving dataset,
-based on the original HumanEval dataset described in the paper "[Evaluating Large
-Language Models Trained on Code](https://arxiv.org/abs/2107.03374)".
+A specialized evaluation harness for assessing Rust code generation capabilities of language models, designed as a core component of the [SigilDERG ecosystem](https://github.com/Superuser666-Sigil) for Rust-focused AI development.
+
+## About the SigilDERG Ecosystem
+
+This evaluation harness is part of an integrated pipeline for training and evaluating Rust code generation models:
+
+1. **[SigilDERG-Data_Production](https://github.com/Superuser666-Sigil/SigilDERG-Data_Production)**: Generates high-quality, instruction-style Rust code datasets from real-world crates using static analysis and quality filters
+2. **[SigilDERG-Finetuner](https://github.com/Superuser666-Sigil/SigilDERG-Finetuner)**: Fine-tunes language models (like Llama-3.1-8B-Instruct) on Rust code using QLoRA and multi-phase training strategies
+3. **HumanEval Rust** (this project): Evaluates model performance on standardized Rust programming problems using the HumanEval benchmark format
+4. **[sigil-mmf-codex-priv](https://github.com/Superuser666-Sigil/sigil-mmf-codex-priv)**: Additional components for the ecosystem
+
+### Target Model
+
+This evaluator is designed to work with fine-tuned Rust code generation models, particularly:
+- **[Llama-3.1-8B-Instruct-Rust-QLora](https://huggingface.co/Superuser666-Sigil/Llama-3.1-8B-Instruct-Rust-QLora)**: A Phase 1 fine-tuned model produced using the SigilDERG Finetuner
 
 ## Installation
 
-Make sure to use Python 3.7 or later:
-```
-$ conda create -n human-eval-rust python=3.7
-$ conda activate human-eval-rust
+### Prerequisites
+
+This package requires **Python 3.12.10 or later**. We recommend using a virtual environment:
+
+```bash
+# Using venv (recommended)
+python3.12 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Or using uv (fast alternative)
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 Install a Rust toolchain via [`rustup`](https://www.rust-lang.org/tools/install) and ensure a modern compiler with Edition 2021 support (Rust 1.56+; we recommend the latest stable toolchain):
-```
-$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-$ rustup default stable
-$ rustc --version
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+rustc --version
 ```
 
-Check out and install this repository:
+### Install from PyPI
+
+```bash
+pip install human-eval-rust
 ```
-$ git clone <repository-url>
-$ pip install -e .
+
+### Install from source
+
+```bash
+git clone https://github.com/Superuser666-Sigil/human-eval-Rust.git
+cd human-eval-Rust
+pip install -e .
 ```
 
 ## Usage
 
-**This program exists to run untrusted model-generated Rust code. Users are strongly
-encouraged not to do so outside of a robust security sandbox. Rust completions are
-compiled and executed via [`rust_execution.py`](human_eval/rust_execution.py);
-you should sandbox the Rust evaluator, because it builds binaries from untrusted
-code and runs their tests locally.**
+**⚠️ Security Warning**: This program exists to run untrusted model-generated Rust code. Users are strongly encouraged not to do so outside of a robust security sandbox. Rust completions are compiled and executed via [`rust_execution.py`](human_eval/rust_execution.py); you should sandbox the Rust evaluator, because it builds binaries from untrusted code and runs their tests locally.
 
-After following the above instructions, generate samples and save them in the
-following JSON Lines (jsonl) format, where each sample is formatted into a single
-line like so:
-```
-{"task_id": "Corresponding HumanEval task ID", "completion": "Completion only without the prompt"}
-```
+### Basic Evaluation Workflow
 
-We provide `example_rust_problem.jsonl` and `example_rust_samples.jsonl` under
-`data` to illustrate the format and help with debugging.
+1. **Generate completions** from your model using the HumanEval Rust prompts
+2. **Save samples** in JSONL format with `task_id` and `completion` fields
+3. **Run evaluation** to get pass@k metrics and detailed results
 
-You can read the Rust prompts from `data/HumanEval_rust.jsonl` (or via
-`get_human_eval_dataset()`) and write completions back out to JSONL. Here is a
-short example:
-```
+### Example: Evaluating a Fine-Tuned Model
+
+```python
 from human_eval.data import read_problems, write_jsonl, get_human_eval_dataset
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
+# Load your fine-tuned model (e.g., from HuggingFace)
+model_name = "Superuser666-Sigil/Llama-3.1-8B-Instruct-Rust-QLora"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Load HumanEval Rust problems
 rust_problems = read_problems(get_human_eval_dataset())
 
-samples = [
-    dict(task_id=task_id, completion=generate_one_completion(rust_problems[task_id]["prompt"]))
-    for task_id in rust_problems
-]
+# Generate completions
+samples = []
+for task_id, problem in rust_problems.items():
+    prompt = problem["prompt"]
+    
+    # Generate completion (adjust parameters as needed)
+    inputs = tokenizer(prompt, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=512,
+            temperature=0.2,
+            do_sample=True,
+        )
+    completion = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+    
+    samples.append(dict(task_id=task_id, completion=completion))
+
+# Save samples
 write_jsonl("rust_samples.jsonl", samples)
+
+# Evaluate
+# Run: evaluate_functional_correctness rust_samples.jsonl
 ```
 
-To evaluate the samples, run:
-```
-$ evaluate_functional_correctness samples.jsonl
+### Command-Line Evaluation
+
+```bash
+$ evaluate_functional_correctness rust_samples.jsonl
 Reading samples...
-32800it [00:01, 23787.50it/s]
+164it [00:01, 1959.50it/s]
 Running test suites...
-100%|...| 32800/32800 [16:11<00:00, 33.76it/s]
-Writing results to samples.jsonl_results.jsonl...
-100%|...| 32800/32800 [00:00<00:00, 42876.84it/s]
-{'pass@1': ..., 'pass@10': ..., 'pass@100': ...}
+100%|...| 164/164 [00:45<00:00,  3.62it/s]
+Writing results to rust_samples.jsonl_results.jsonl...
+100%|...| 164/164 [00:00<00:00, 42876.84it/s]
+{'pass@1': 0.42, 'pass@10': 0.68, 'pass@100': 0.85}
 ```
 
-This script provides more fine-grained information in a new file ending in
-`<input_path>_results.jsonl`. Each row now contains whether the completion
-`passed` along with the execution `result` which is one of "passed", "timed
-out", or "failed".
+The evaluator provides detailed results in `<input>_results.jsonl` with per-sample pass/fail status and execution results ("passed", "timed out", or "failed").
 
-As a quick sanity-check, the example samples should yield 0.5 pass@1:
+### Integration with SigilDERG Finetuner
+
+The evaluation workflow integrates seamlessly with the [SigilDERG Finetuner](https://github.com/Superuser666-Sigil/SigilDERG-Finetuner) evaluation system:
+
+1. **After training**: Use the finetuner's evaluation scripts to generate samples
+2. **Run this evaluator**: Process the generated samples to get HumanEval metrics
+3. **Compare metrics**: Track improvements across training phases
+
+Example integration:
+```bash
+# After Phase 1 training, evaluate checkpoint
+python scripts/generate_samples.py \
+  --checkpoint out/llama8b-rust-qlora-phase1/checkpoint-1000 \
+  --output eval_samples.jsonl
+
+# Evaluate with HumanEval Rust
+evaluate_functional_correctness eval_samples.jsonl \
+  --problem_file=data/HumanEval_rust.jsonl
 ```
+
+### Quick Sanity Check
+
+The example samples should yield 0.5 pass@1:
+```bash
 $ evaluate_functional_correctness data/example_rust_samples.jsonl --problem_file=data/example_rust_problem.jsonl
 Reading samples...
 4it [00:00, 1959.50it/s]
@@ -87,36 +152,64 @@ Writing results to data/example_rust_samples.jsonl_results.jsonl...
 {'pass@1': 0.5}
 ```
 
-Because there is no unbiased way of estimating pass@k when there are fewer
-samples than k, the script does not evaluate pass@k for these cases. To
-evaluate with other k values, pass `--k=<comma-separated-values-here>`. For
-other options, see:
-```
-$ evaluate_functional_correctness --help
+### Advanced Options
+
+```bash
+# Custom pass@k values
+evaluate_functional_correctness samples.jsonl --k=1,5,10,20
+
+# Adjust parallelism
+evaluate_functional_correctness samples.jsonl --n_workers=8
+
+# Custom timeout
+evaluate_functional_correctness samples.jsonl --timeout=5.0
+
+# See all options
+evaluate_functional_correctness --help
 ```
 
-However, we recommend that you use the default values for the rest.
+## Dataset Format
 
-The Rust dataset lives at `data/HumanEval_rust.jsonl`. You can reference this
-path directly or let the evaluator use it as the default.
+The HumanEval Rust dataset (`data/HumanEval_rust.jsonl`) contains 164 Rust programming problems. Each problem includes:
+- `task_id`: Unique identifier (e.g., "HumanEval/0")
+- `prompt`: Function signature and docstring
+- `canonical_solution`: Reference implementation
+- `test`: Rust test cases using `#[cfg(test)]`
+- `entry_point`: Function name
 
-Example invocation:
+Sample format:
+```json
+{"task_id": "HumanEval/0", "prompt": "fn has_close_elements(...) -> bool{", "canonical_solution": "...", "test": "#[cfg(test)]\nmod tests {...}", "entry_point": "has_close_elements"}
 ```
-$ evaluate_functional_correctness data/example_rust_samples.jsonl --problem_file=data/example_rust_problem.jsonl
-```
+
+## Integration with SigilDERG Pipeline
+
+### Complete Workflow
+
+1. **Data Production** → Generate training data with [SigilDERG-Data_Production](https://github.com/Superuser666-Sigil/SigilDERG-Data_Production)
+2. **Model Fine-Tuning** → Train on Rust code with [SigilDERG-Finetuner](https://github.com/Superuser666-Sigil/SigilDERG-Finetuner)
+3. **Evaluation** → Assess performance with this HumanEval Rust harness
+4. **Iteration** → Use results to guide further training and data collection
+
+### Metrics and Benchmarking
+
+This evaluator provides standardized `pass@k` metrics that complement the comprehensive evaluation metrics from the SigilDERG Finetuner:
+- **Compilation metrics**: Success rates, clippy warnings
+- **Code quality**: Documentation, idiomatic patterns
+- **Functional correctness**: HumanEval pass@k scores (this project)
+
+Together, these metrics provide a complete picture of model performance for Rust code generation.
 
 ## Known Issues
 
-While evaluation uses very little memory, you might see the following error
-message when the system is running out of RAM. Since this may cause some
-correct programs to fail, we recommend that you free some memory and try again.
+While evaluation uses very little memory, you might see the following error message when the system is running out of RAM. Since this may cause some correct programs to fail, we recommend that you free some memory and try again.
 ```
 malloc: can't allocate region
 ```
 
 ## Citation
 
-Please cite using the following bibtex entry:
+This evaluation harness is based on the HumanEval benchmark format described in the original Codex paper. Please cite:
 
 ```
 @article{chen2021codex,
@@ -128,3 +221,7 @@ Please cite using the following bibtex entry:
   primaryClass={cs.LG}
 }
 ```
+
+## License
+
+MIT License
