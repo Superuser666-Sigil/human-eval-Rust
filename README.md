@@ -185,8 +185,45 @@ evaluate_functional_correctness samples.jsonl --n_workers=8
 # Custom timeout
 evaluate_functional_correctness samples.jsonl --timeout=5.0
 
+# Sandboxing options (recommended for production)
+evaluate_functional_correctness samples.jsonl --sandbox-mode=docker
+evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail
+evaluate_functional_correctness samples.jsonl --sandbox-mode=auto  # Auto-detect (default)
+evaluate_functional_correctness samples.jsonl --sandbox-mode=none  # UNSAFE: local dev only
+
 # See all options
 evaluate_functional_correctness --help
+```
+
+### Security and Sandboxing
+
+**⚠️ Important**: This evaluator runs untrusted LLM-generated Rust code. For production use, **always use Docker or Firejail sandboxing**.
+
+The evaluator includes multiple layers of security:
+
+1. **Pattern-based filtering**: Blocks dangerous code patterns before execution (filesystem, network, process operations, unsafe code, etc.)
+2. **Process isolation**: Each evaluation runs in a separate process
+3. **Docker/Firejail sandboxing** (recommended): Full container/jail isolation with resource limits
+
+**Sandbox Modes**:
+- `docker` (recommended): Uses Docker containers with `--network=none`, read-only filesystem, memory/CPU limits
+- `firejail`: Uses Firejail for Linux systems without Docker
+- `auto` (default): Auto-detects available sandbox (Docker → Firejail → none)
+- `none`: No sandboxing (UNSAFE - only for local development with trusted code)
+
+**Docker Setup**:
+```bash
+# Docker image is built automatically on first use
+# Or build manually:
+docker build -t human-eval-rust-sandbox -f Dockerfile.eval .
+```
+
+**Firejail Setup** (Linux only):
+```bash
+# Install Firejail
+sudo apt-get install firejail  # Debian/Ubuntu
+# or
+sudo yum install firejail       # RHEL/CentOS
 ```
 
 ## Dataset Format
@@ -246,3 +283,4 @@ This evaluation harness is based on the HumanEval benchmark format described in 
 ## License
 
 MIT License
+

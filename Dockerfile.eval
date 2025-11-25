@@ -1,0 +1,21 @@
+# Rust evaluation sandbox for HumanEval
+# This container provides a minimal, isolated environment for compiling Rust code
+
+FROM rust:1.82-slim
+
+# Install rustc components (clippy and rustfmt not needed for basic compilation)
+RUN rustup component add rustfmt || true
+
+# Create a non-root user for additional security
+RUN useradd -m -u 1000 rustuser && \
+    mkdir -p /eval && \
+    chown -R rustuser:rustuser /eval && \
+    mkdir -p /tmp/cargo-target && \
+    chown -R rustuser:rustuser /tmp/cargo-target
+
+# Set working directory
+WORKDIR /eval
+
+# Default command (can be overridden)
+CMD ["/bin/bash"]
+

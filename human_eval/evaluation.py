@@ -57,6 +57,7 @@ def evaluate_functional_correctness(
     timeout: float = 3.0,
     problem_file: Optional[str] = None,
     language: Optional[str] = None,
+    sandbox_mode: Optional[str] = None,
 ):
     """
     Evaluates the functional correctness of generated samples, and writes
@@ -95,6 +96,7 @@ def evaluate_functional_correctness(
                 timeout,
                 completion_id[task_id],
                 resolved_language,
+                sandbox_mode,
             )
             future = executor.submit(check_correctness, *args)
             futures.append(future)
