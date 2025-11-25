@@ -47,6 +47,25 @@ pip install human-eval-rust
 
 📦 **Package available on PyPI**: [https://pypi.org/project/human-eval-rust/](https://pypi.org/project/human-eval-rust/)
 
+### Install Full Ecosystem
+
+Install all three SigilDERG packages together:
+
+```bash
+pip install human-eval-rust[ecosystem]
+```
+
+Or install via the pipeline package:
+
+```bash
+pip install sigil-pipeline[ecosystem]
+```
+
+This installs:
+- `human-eval-rust>=1.0.1`
+- `sigil-pipeline>=1.1.0`
+- `sigilderg-finetuner>=2.7.2`
+
 ### Install from source
 
 ```bash
