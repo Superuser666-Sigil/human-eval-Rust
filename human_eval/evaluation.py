@@ -1,3 +1,12 @@
+"""
+Functional correctness evaluation for HumanEval Rust completions.
+
+Implements pass@k estimation and parallel test execution.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 1.0.1
+"""
+
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Union, Iterable, Dict, Optional

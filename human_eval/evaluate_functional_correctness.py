@@ -1,7 +1,14 @@
+"""
+Command-line entry point for HumanEval Rust functional correctness evaluation.
+
+Provides CLI interface using Fire for evaluating Rust code completions.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 1.0.1
+"""
+
 import fire
 import sys
-
-from typing import Optional
 
 from human_eval.data import get_human_eval_dataset
 from human_eval.evaluation import evaluate_functional_correctness
@@ -12,9 +19,9 @@ def entry_point(
     k: str = "1,10,100",
     n_workers: int = 4,
     timeout: float = 3.0,
-    problem_file: Optional[str] = None,
-    language: Optional[str] = None,
-    sandbox_mode: Optional[str] = None,
+    problem_file: str | None = None,
+    language: str | None = None,
+    sandbox_mode: str | None = None,
     enforce_policy: bool = True,
 ):
     """
@@ -37,7 +44,7 @@ def entry_point(
         Set to False for pure HumanEval compatibility without security filtering.
         Use --no-enforce-policy to disable policy enforcement.
     """
-    k = list(map(int, k.split(",")))
+    k_list: list[int] = list(map(int, k.split(",")))
     if problem_file is None:
         problem_file = get_human_eval_dataset(language)
 
@@ -67,7 +74,7 @@ def entry_point(
 
     results = evaluate_functional_correctness(
         sample_file,
-        k,
+        k_list,
         n_workers,
         timeout,
         problem_file,

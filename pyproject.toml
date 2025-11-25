@@ -58,3 +58,8 @@ packages = ["human_eval"]
 [tool.setuptools.package-data]
 "*" = ["../data/*.jsonl"]
 
+[tool.basedpyright]
+venvPath = "D:\\SigilDERG-Data_Production"
+venv = ".venv"
+reportMissingImports = true
+

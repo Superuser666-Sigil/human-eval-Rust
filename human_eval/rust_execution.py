@@ -1,7 +1,15 @@
+"""
+Rust-specific execution module for HumanEval evaluation.
+
+Handles compilation and test execution of Rust code completions with sandboxing support.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 1.0.1
+"""
+
 import multiprocessing
 import os
 import subprocess
-from typing import Dict, Optional
 
 from human_eval.execution import (
     TimeoutException,
@@ -16,15 +24,31 @@ try:
         run_rustc_sandboxed,
         run_binary_sandboxed,
         SandboxError,
-        check_docker_available,
-        check_firejail_available,
     )
     SANDBOX_AVAILABLE = True
 except ImportError:
     SANDBOX_AVAILABLE = False
     SandboxError = Exception
-    check_docker_available = lambda: False
-    check_firejail_available = lambda: False
+    
+    # Define stub functions to satisfy type checker
+    # These will never be called because SANDBOX_AVAILABLE is False
+    def run_rustc_sandboxed(
+        source_file: str,
+        output_binary: str,
+        command_args: list[str],
+        timeout: float = 30.0,
+        capture_output: bool = True,
+        sandbox_mode: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        raise RuntimeError("Sandbox not available")
+    
+    def run_binary_sandboxed(
+        binary_path: str,
+        timeout: float = 30.0,
+        capture_output: bool = True,
+        sandbox_mode: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        raise RuntimeError("Sandbox not available")
 
 DISALLOWED_COMPLETION_PATTERNS = [
     # Filesystem operations
@@ -217,7 +241,7 @@ DISALLOWED_COMPLETION_PATTERNS = [
 ]
 
 
-def _sanitize_rust_completion(completion: str) -> Optional[str]:
+def _sanitize_rust_completion(completion: str) -> str | None:
     lowered_completion = completion.lower()
     for pattern in DISALLOWED_COMPLETION_PATTERNS:
         if pattern.lower() in lowered_completion:
@@ -226,11 +250,11 @@ def _sanitize_rust_completion(completion: str) -> Optional[str]:
 
 
 def _rust_unsafe_execute(
-    problem: Dict,
+    problem: dict,
     completion: str,
     timeout: float,
     result,
-    sandbox_mode: Optional[str] = None,
+    sandbox_mode: str | None = None,
     enforce_policy: bool = True,
 ):
     with create_tempdir() as temp_dir:
@@ -340,13 +364,13 @@ def _rust_unsafe_execute(
 
 
 def rust_check_correctness(
-    problem: Dict,
+    problem: dict,
     completion: str,
     timeout: float,
-    completion_id: Optional[int] = None,
-    sandbox_mode: Optional[str] = None,
+    completion_id: int | None = None,
+    sandbox_mode: str | None = None,
     enforce_policy: bool = True,
-) -> Dict:
+) -> dict:
     """
     Evaluate a Rust completion by compiling and running its tests.
     

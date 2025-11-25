@@ -4,6 +4,9 @@ Sandbox wrapper for Rust code evaluation in HumanEval.
 This module provides secure isolation for running rustc commands on LLM-generated code.
 Uses Docker containers for isolation, with Firejail fallback for local development.
 Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 1.0.1
 """
 
 import os
