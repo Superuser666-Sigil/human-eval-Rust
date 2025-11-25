@@ -4,7 +4,7 @@ Execution utilities for HumanEval Rust evaluation.
 Provides timeout handling, reliability guards, and correctness checking.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.1.0
+Version: 1.1.1
 """
 
 import contextlib
@@ -14,8 +14,6 @@ import platform
 import signal
 import tempfile
 from typing import Dict, Optional
-
-from human_eval import rust_execution
 
 
 def check_correctness(
@@ -37,6 +35,9 @@ def check_correctness(
     :param enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
         Set to False for pure HumanEval compatibility without security filtering.
     """
+    # Import here to avoid circular import (rust_execution imports from execution)
+    from human_eval import rust_execution
+    
     # Language parameter is kept for API compatibility but only Rust is supported
     if language and language.lower() != "rust":
         raise ValueError(f"Only Rust is supported. Got language: {language}")
