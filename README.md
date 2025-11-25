@@ -45,6 +45,8 @@ rustc --version
 pip install human-eval-rust
 ```
 
+📦 **Package available on PyPI**: [https://pypi.org/project/human-eval-rust/](https://pypi.org/project/human-eval-rust/)
+
 ### Install from source
 
 ```bash
