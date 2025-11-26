@@ -62,8 +62,8 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.2.0`
-- `sigil-pipeline>=1.2.0`
+- `human-eval-rust>=1.2.2`
+- `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
 ### Install from source
@@ -179,10 +179,10 @@ Writing results to data/example_rust_samples.jsonl_results.jsonl...
 # Custom pass@k values
 evaluate_functional_correctness samples.jsonl --k=1,5,10,20
 
-# Adjust parallelism
+# Adjust parallelism (default: 24 workers optimized for H100)
 evaluate_functional_correctness samples.jsonl --n_workers=8
 
-# Custom timeout
+# Custom timeout (default: 10.0s optimized for H100)
 evaluate_functional_correctness samples.jsonl --timeout=5.0
 
 # Sandboxing options (recommended for production)
@@ -265,6 +265,23 @@ This evaluator provides standardized `pass@k` metrics that complement the compre
 - **Functional correctness**: HumanEval pass@k scores (this project)
 
 Together, these metrics provide a complete picture of model performance for Rust code generation.
+
+## Hardware Optimizations (H100 Configuration)
+
+Version 1.2.2+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
+
+### Default Configuration
+- **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)
+- **Timeout**: 10.0 seconds (default `--timeout=10.0`) - Increased from 3.0s to handle compilation latency on loaded systems
+- **Docker Memory Limit**: 4GB per container (increased from 512MB) - Handles complex, macro-heavy Rust code compilation
+- **Docker tmpfs Size**: 2GB (increased from 300MB) - Prevents "disk full" errors during build artifact generation
+
+### Resource Usage
+With 24 workers and 4GB memory per container:
+- **Maximum Memory Usage**: ~96GB (24 workers × 4GB) - Well within 225GB safety margin
+- **CPU Utilization**: ~92% (24/26 vCPUs) - Near-saturation for maximum throughput
+
+These defaults are optimized for production evaluation on high-end hardware. For smaller systems, you can override with `--n_workers` and `--timeout` flags.
 
 ## Known Issues
 

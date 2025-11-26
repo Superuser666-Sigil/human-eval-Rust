@@ -6,7 +6,7 @@ Uses Docker containers for isolation, with Firejail fallback for local developme
 Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.2.1
+Version: 1.2.2
 """
 
 import os
@@ -148,12 +148,14 @@ def run_rustc_in_docker(
     output_name = os.path.basename(output_binary)
     
     # Base Docker options (security restrictions)
+    # Optimized for H100: 4GB memory limit (was 512m) to handle complex Rust compilation
+    # 2GB tmpfs (was 300m) to prevent "disk full" errors during build
     base_docker_opts = [
         "--rm",  # Remove container after execution
-        "--memory=512m",  # Limit memory
+        "--memory=4g",  # Limit memory (increased for complex Rust compilation)
         "--cpus=1",  # Limit CPU
         "--read-only",  # Read-only root filesystem
-        "--tmpfs", "/tmp:rw,exec,nosuid,size=300m,mode=1777",  # Temporary writable space
+        "--tmpfs", "/tmp:rw,exec,nosuid,size=2g,mode=1777",  # Temporary writable space (increased for build artifacts)
         "-v", f"{source_dir}:/eval:ro",  # Mount source directory as read-only
         "-w", "/eval",  # Working directory
         "-e", "CARGO_TARGET_DIR=/tmp/cargo-target",  # Set cargo to use tmpfs
@@ -236,12 +238,14 @@ def run_binary_in_docker(
     binary_name = os.path.basename(binary_path)
     
     # Base Docker options
+    # Optimized for H100: 4GB memory limit (was 512m) to handle complex Rust compilation
+    # 2GB tmpfs (was 300m) to prevent "disk full" errors during build
     base_docker_opts = [
         "--rm",
-        "--memory=512m",
+        "--memory=4g",  # Limit memory (increased for complex Rust compilation)
         "--cpus=1",
         "--read-only",
-        "--tmpfs", "/tmp:rw,exec,nosuid,size=300m,mode=1777",
+        "--tmpfs", "/tmp:rw,exec,nosuid,size=2g,mode=1777",  # Temporary writable space (increased for build artifacts)
         "-v", f"{binary_dir}:/eval:ro",
         "-w", "/eval",
     ]
