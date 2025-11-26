@@ -279,7 +279,10 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
     
     # Step 2: Try to find the function that matches entry_point
     # Pattern: fn entry_point(...) -> ... { ... }
-    fn_pattern = rf'fn\s+{re.escape(entry_point)}\s*\([^)]*\)\s*(?:->[^{{{]*)?\s*\{{'
+    # Note: Construct pattern carefully to avoid f-string bracket issues
+    # The pattern matches: fn entry_point(...) -> [anything except {] { ... }
+    not_brace_pattern = r'[^{]'  # Match any character except opening brace
+    fn_pattern = rf'fn\s+{re.escape(entry_point)}\s*\([^)]*\)\s*(?:->{not_brace_pattern}*)?\s*\{{'
     fn_match = re.search(fn_pattern, completion, re.MULTILINE | re.DOTALL)
     
     if fn_match:
