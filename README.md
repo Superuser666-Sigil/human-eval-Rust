@@ -2,7 +2,7 @@
 
 A specialized evaluation harness for assessing Rust code generation capabilities of language models, designed as a core component of the [SigilDERG ecosystem](https://github.com/Superuser666-Sigil) for Rust-focused AI development.
 
-> 📖 **Ecosystem Architecture**: For a comprehensive overview of how this project integrates with [SigilDERG-Data_Production](https://github.com/Superuser666-Sigil/SigilDERG-Data_Production) and [SigilDERG-Finetuner](https://github.com/Superuser666-Sigil/SigilDERG-Finetuner), see [ARCHITECTURE.md](../SigilDERG-Data_Production/ARCHITECTURE.md) in the Data Production repository.
+> 📖 **Ecosystem Architecture**: For a comprehensive overview of how this project integrates with [SigilDERG-Data_Production](https://github.com/Superuser666-Sigil/SigilDERG-Data_Production) and [SigilDERG-Finetuner](https://github.com/Superuser666-Sigil/SigilDERG-Finetuner), see [ARCHITECTURE.md](https://github.com/Superuser666-Sigil/SigilDERG-Data_Production/blob/main/ARCHITECTURE.md) in the Data Production repository.
 
 ## About the SigilDERG Ecosystem
 
