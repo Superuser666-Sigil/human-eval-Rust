@@ -4,7 +4,7 @@ Execution utilities for HumanEval Rust evaluation.
 Provides timeout handling, reliability guards, and correctness checking.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.1
+Version: 1.3.2
 """
 
 import contextlib

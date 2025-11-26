@@ -4,14 +4,15 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.1
+Version: 1.3.2
 """
 
 import multiprocessing
 import os
 import subprocess
 
-from human_eval.execution import (
+# Use relative import to avoid circular dependency with execution.py
+from .execution import (
     TimeoutException,
     create_tempdir,
     reliability_guard,
@@ -20,7 +21,7 @@ from human_eval.execution import (
 
 # Try to import sandbox module (optional)
 try:
-    from human_eval.sandbox import (
+    from .sandbox import (
         run_rustc_sandboxed,
         run_binary_sandboxed,
         SandboxError,

@@ -6,7 +6,7 @@ Uses Docker containers for isolation, with Firejail fallback for local developme
 Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.1
+Version: 1.3.2
 """
 
 import os
