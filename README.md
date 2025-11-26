@@ -64,7 +64,7 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.2.2`
+- `human-eval-rust>=1.3.0`
 - `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
@@ -270,7 +270,25 @@ Together, these metrics provide a complete picture of model performance for Rust
 
 ## Hardware Optimizations (H100 Configuration)
 
-Version 1.2.2+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
+## Version 1.3.0 Features
+
+**Completion Extraction & Cleaning:**
+- Automatically extracts function bodies from model completions
+- Removes extra `main()` functions and standalone code
+- Strips markdown code blocks (```rust, ```)
+- Handles completions with or without function signatures
+- Improves evaluation accuracy by ensuring only the target function is tested
+
+**Robust Validation:**
+- Validates `rustc` availability in Docker sandbox before evaluation (fails fast if broken)
+- Validates `rustc` on host when using `sandbox_mode="none"`
+- Prevents silent failures across thousands of samples
+
+**Docker Improvements:**
+- Fixed Docker container user context (ensures `rustc` is in PATH)
+- Improved error messages for sandbox setup issues
+
+Version 1.3.0+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
 
 ### Default Configuration
 - **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)

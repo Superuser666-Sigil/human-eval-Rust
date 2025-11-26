@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.2.2
+Version: 1.3.0
 """
 
 import multiprocessing
@@ -249,6 +249,133 @@ def _sanitize_rust_completion(completion: str) -> str | None:
     return None
 
 
+def _extract_function_body(completion: str, entry_point: str) -> str:
+    """
+    Extract the function body from a completion, removing extra code like main() functions.
+    
+    Args:
+        completion: Raw completion text from the model
+        entry_point: Name of the function we're looking for (e.g., "has_close_elements")
+    
+    Returns:
+        Cleaned completion with only the target function body
+    """
+    import re
+    
+    # Step 1: Remove markdown code blocks
+    if "```rust" in completion:
+        # Extract content between ```rust and ```
+        rust_match = re.search(r'```rust\s*(.*?)\s*```', completion, re.DOTALL)
+        if rust_match:
+            completion = rust_match.group(1)
+    elif "```" in completion:
+        # Generic code block
+        code_match = re.search(r'```[^\n]*\s*(.*?)\s*```', completion, re.DOTALL)
+        if code_match:
+            completion = code_match.group(1)
+    
+    completion = completion.strip()
+    
+    # Step 2: Try to find the function that matches entry_point
+    # Pattern: fn entry_point(...) -> ... { ... }
+    fn_pattern = rf'fn\s+{re.escape(entry_point)}\s*\([^)]*\)\s*(?:->[^{{{]*)?\s*\{{'
+    fn_match = re.search(fn_pattern, completion, re.MULTILINE | re.DOTALL)
+    
+    if fn_match:
+        # Found the target function, extract from the opening brace
+        start_pos = fn_match.end() - 1  # Position of opening brace
+        brace_count = 0
+        end_pos = start_pos
+        
+        # Find matching closing brace
+        for i in range(start_pos, len(completion)):
+            if completion[i] == '{':
+                brace_count += 1
+            elif completion[i] == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i + 1
+                    break
+        
+        if brace_count == 0:
+            # Extract just the function body (without the function signature)
+            # The prompt already has the signature, we just need the body
+            function_body = completion[start_pos + 1:end_pos - 1].strip()
+            return function_body
+    
+    # Step 2b: If completion is just the function body (no signature), check if it starts with {
+    # This handles cases where the model generates just the body
+    if completion.strip().startswith('{'):
+        # Extract content between first { and matching }
+        brace_count = 0
+        start_pos = 0
+        end_pos = len(completion)
+        
+        for i, char in enumerate(completion):
+            if char == '{':
+                if brace_count == 0:
+                    start_pos = i + 1
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i
+                    return completion[start_pos:end_pos].strip()
+        
+        # If we didn't find a matching brace, return everything after the first {
+        if brace_count > 0:
+            return completion[start_pos:].strip()
+    
+    # Step 3: If we didn't find the target function, try to extract any function body
+    # and remove main() functions
+    lines = completion.split('\n')
+    cleaned_lines = []
+    in_main = False
+    brace_count = 0
+    skip_until_brace_close = 0
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        
+        # Skip standalone main() functions
+        if re.match(r'^fn\s+main\s*\([^)]*\)\s*(?:->[^{{{]*)?\s*\{{', stripped):
+            in_main = True
+            brace_count = 1
+            # Skip until matching closing brace
+            i += 1
+            while i < len(lines) and brace_count > 0:
+                line = lines[i]
+                brace_count += line.count('{') - line.count('}')
+                i += 1
+            continue
+        
+        # Skip lines that are part of a main() function we're skipping
+        if in_main:
+            brace_count += line.count('{') - line.count('}')
+            if brace_count <= 0:
+                in_main = False
+            i += 1
+            continue
+        
+        # Keep other lines
+        cleaned_lines.append(line)
+        i += 1
+    
+    result = '\n'.join(cleaned_lines).strip()
+    
+    # Step 4: Remove common extra patterns
+    # Remove "Example usage:" or "// Example usage:" blocks
+    result = re.sub(r'(?i)(//\s*)?(example\s+usage|usage\s+example):.*', '', result, flags=re.DOTALL)
+    
+    # Remove standalone use statements that aren't needed (keep them if they're at the top)
+    # This is tricky, so we'll be conservative and only remove obviously wrong ones
+    result = re.sub(r'^use\s+std::collections::Vec;?\s*$', '', result, flags=re.MULTILINE)  # Vec is in std::vec, not collections
+    
+    return result.strip()
+
+
 def _rust_unsafe_execute(
     problem: dict,
     completion: str,
@@ -269,9 +396,13 @@ def _rust_unsafe_execute(
         subprocess.Popen = popen
 
         try:
+            # Clean up completion: extract function body and remove extra code
+            entry_point = problem.get("entry_point", "")
+            cleaned_completion = _extract_function_body(completion, entry_point)
+            
             # Policy enforcement (pattern filtering) - can be disabled for pure HumanEval compatibility
             if enforce_policy:
-                violation = _sanitize_rust_completion(completion)
+                violation = _sanitize_rust_completion(cleaned_completion)
                 if violation:
                     result.append(f"failed: {violation}")
                     return
@@ -281,7 +412,7 @@ def _rust_unsafe_execute(
 
             with open(source_path, "w", encoding="utf-8") as source_file:
                 source_file.write(problem["prompt"])
-                source_file.write(completion)
+                source_file.write(cleaned_completion)
                 source_file.write("\n\n")
                 source_file.write(problem["test"])
                 source_file.write("\n")

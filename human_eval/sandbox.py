@@ -6,7 +6,7 @@ Uses Docker containers for isolation, with Firejail fallback for local developme
 Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.2.2
+Version: 1.3.0
 """
 
 import os
@@ -15,6 +15,10 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+# Cache for rustc validation (avoid checking on every call)
+_docker_rustc_validated = False
+_host_rustc_validated = False
 
 
 class SandboxError(Exception):
@@ -99,6 +103,9 @@ RUN useradd -m -u 1000 rustuser && \\
     mkdir -p /tmp/cargo-target && \\
     chown -R rustuser:rustuser /tmp/cargo-target
 
+# Switch to rustuser (ensures rustc is in PATH)
+USER rustuser
+
 # Set working directory
 WORKDIR /eval
 
@@ -139,6 +146,31 @@ def run_rustc_in_docker(
         print("Building Docker image for evaluation sandbox...", file=__import__("sys").stderr)
         if not build_docker_image():
             raise SandboxError("Failed to build Docker image. Run with --sandbox-mode=none for local dev.")
+    
+    # Validate rustc is available in the sandbox (fail fast if broken)
+    # Only check once per process to avoid performance overhead
+    global _docker_rustc_validated
+    if not _docker_rustc_validated:
+        test_cmd = [
+            "docker", "run", "--rm",
+            "human-eval-rust-sandbox",
+            "bash", "-lc", "which rustc && rustc --version"
+        ]
+        test_result = subprocess.run(
+            test_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if test_result.returncode != 0:
+            raise SandboxError(
+                f"Rust toolchain not available in sandbox. "
+                f"This indicates the Docker image is broken.\n"
+                f"stdout: {test_result.stdout}\n"
+                f"stderr: {test_result.stderr}\n"
+                f"Try rebuilding the image or check Docker setup."
+            )
+        _docker_rustc_validated = True
     
     # Convert host paths to absolute
     source_file = os.path.abspath(source_file)
@@ -423,6 +455,18 @@ def run_rustc_sandboxed(
         return run_rustc_with_firejail(source_file, output_binary, command_args, timeout, capture_output)
     elif sandbox_mode == "none":
         # No sandboxing - only for local development with trusted code
+        # Validate rustc is available on host (fail fast if missing)
+        # Only check once per process to avoid performance overhead
+        global _host_rustc_validated
+        if not _host_rustc_validated:
+            import shutil
+            if shutil.which("rustc") is None:
+                raise SandboxError(
+                    "rustc not found in PATH. "
+                    "Install Rust toolchain or use sandbox_mode='docker' or 'firejail'."
+                )
+            _host_rustc_validated = True
+        
         rustc_cmd = ["rustc"] + command_args + [source_file, "-o", output_binary]
         return subprocess.run(
             rustc_cmd,

@@ -13,6 +13,9 @@ RUN useradd -m -u 1000 rustuser && \
     mkdir -p /tmp/cargo-target && \
     chown -R rustuser:rustuser /tmp/cargo-target
 
+# Switch to rustuser (ensures rustc is in PATH)
+USER rustuser
+
 # Set working directory
 WORKDIR /eval
 
