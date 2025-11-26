@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-eval-rust"
-version = "1.2.0"
+version = "1.2.1"
 description = "Evaluation harness for the HumanEval Rust problem solving dataset"
 readme = "README.md"
 requires-python = ">=3.12.10"
@@ -31,10 +31,12 @@ dependencies = [
     "fire>=0.5.0",
     "numpy>=1.24.0",
     "termcolor>=3.2.0",
-    "flash-attn>=2.5.0",
 ]
 
 [project.optional-dependencies]
+flash-attn = [
+    "flash-attn>=2.5.0",
+]
 ecosystem = [
     "sigil-pipeline>=1.2.0",
     "sigilderg-finetuner>=2.8.0",
