@@ -62,6 +62,14 @@ packages = ["human_eval"]
 [tool.setuptools.package-data]
 "*" = ["../data/*.jsonl"]
 
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
 [tool.basedpyright]
 venvPath = "D:\\SigilDERG-Data_Production"
 venv = ".venv"
