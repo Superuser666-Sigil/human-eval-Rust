@@ -297,7 +297,7 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
         if brace_count == 0:
             # Extract just the function body (without the function signature)
             # The prompt already has the signature, we just need the body
-            function_body = completion[start_pos + 1 : end_pos - 1].strip()
+            function_body = completion[start_pos + 1:end_pos - 1].strip()
             return function_body
 
     # Step 2b: If completion is just the function body (no signature), check if it starts with {

@@ -70,6 +70,11 @@ target-version = ["py312"]
 profile = "black"
 line_length = 88
 
+[tool.flake8]
+max-line-length = 88
+ignore = ["E203", "E501", "W503"]
+exclude = ["venv", ".venv", "build", "dist"]
+
 [tool.basedpyright]
 venvPath = "D:\\SigilDERG-Data_Production"
 venv = ".venv"
