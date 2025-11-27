@@ -12,11 +12,13 @@ import os
 import subprocess
 
 # Use relative import to avoid circular dependency with execution.py
-from .execution import TimeoutException, create_tempdir, reliability_guard, time_limit
+from .execution import (TimeoutException, create_tempdir, reliability_guard,
+                        time_limit)
 
 # Try to import sandbox module (optional)
 try:
-    from .sandbox import SandboxError, run_binary_sandboxed, run_rustc_sandboxed
+    from .sandbox import (SandboxError, run_binary_sandboxed,
+                          run_rustc_sandboxed)
 
     SANDBOX_AVAILABLE = True
 except ImportError:
