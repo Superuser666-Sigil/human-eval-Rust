@@ -344,7 +344,7 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
         stripped = line.strip()
         
         # Skip standalone main() functions
-        if re.match(r'^fn\s+main\s*\([^)]*\)\s*(?:->[^{{{]*)?\s*\{{', stripped):
+        if re.match(r'^fn\s+main\s*\([^)]*\)\s*(?:->[^{]*)?\s*\{', stripped):
             in_main = True
             brace_count = 1
             # Skip until matching closing brace
