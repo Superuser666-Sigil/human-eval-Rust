@@ -4,7 +4,7 @@ Functional correctness evaluation for HumanEval Rust completions.
 Implements pass@k estimation and parallel test execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.6
+Version: 1.3.7
 """
 
 from collections import defaultdict, Counter

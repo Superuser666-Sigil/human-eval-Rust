@@ -64,7 +64,7 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.3.6`
+- `human-eval-rust>=1.3.7`
 - `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
