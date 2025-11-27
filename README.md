@@ -91,12 +91,40 @@ pip install -e .
 ```python
 from human_eval.data import read_problems, write_jsonl, get_human_eval_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import AutoPeftModelForCausalLM
 import torch
 
-# Load your fine-tuned model (e.g., from HuggingFace)
-model_name = "Superuser666-Sigil/Llama-3.1-8B-Instruct-Rust-QLora"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name)
+# Load your fine-tuned PEFT model (e.g., from HuggingFace)
+# For checkpoint subdirectories, use: "repo-name/checkpoint-9000"
+model_name = "Superuser666-Sigil/Llama-3.1-8B-Instruct-Rust-QLora/checkpoint-9000"
+
+# Load tokenizer (try checkpoint subfolder first, fallback to repo root)
+try:
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+except Exception:
+    # Fallback: load from repo root or base model
+    repo_name = model_name.split("/checkpoint-")[0] if "/checkpoint-" in model_name else model_name
+    tokenizer = AutoTokenizer.from_pretrained(repo_name)
+
+# Load PEFT model with explicit parameters to avoid TensorFlow loading issues
+model = AutoPeftModelForCausalLM.from_pretrained(
+    model_name,
+    dtype=torch.bfloat16,
+    device_map="auto",
+    trust_remote_code=True,
+    from_tf=False,  # Explicitly prevent TensorFlow loading
+    use_safetensors=True,  # Prefer SafeTensors format
+)
+
+# For base models (not PEFT), use:
+# model = AutoModelForCausalLM.from_pretrained(
+#     model_name,
+#     dtype=torch.bfloat16,
+#     device_map="auto",
+#     trust_remote_code=True,
+#     from_tf=False,
+#     use_safetensors=True,
+# )
 
 # Load HumanEval Rust problems
 rust_problems = read_problems(get_human_eval_dataset())
