@@ -91,6 +91,27 @@ def evaluate_functional_correctness(
     resolved_language = _resolve_language(language, problem_file)
 
     problems = read_problems(problem_file)
+    
+    # Pre-build Docker image if using Docker sandbox (before starting parallel workers)
+    if sandbox_mode == "docker" or (sandbox_mode is None and resolved_language == "rust"):
+        try:
+            from human_eval.sandbox import check_docker_available, build_docker_image
+            if check_docker_available():
+                # Check if image exists
+                import subprocess
+                check_result = subprocess.run(
+                    ["docker", "images", "-q", "human-eval-rust-sandbox"],
+                    capture_output=True,
+                    text=True
+                )
+                if not check_result.stdout.strip():
+                    print("Pre-building Docker image for evaluation sandbox (this may take a few minutes)...", file=__import__("sys").stderr)
+                    if not build_docker_image():
+                        print("WARNING: Docker image build failed. Evaluation may fail.", file=__import__("sys").stderr)
+                    else:
+                        print("✓ Docker image built successfully", file=__import__("sys").stderr)
+        except Exception as e:
+            print(f"WARNING: Could not pre-build Docker image: {e}", file=__import__("sys").stderr)
 
     # Check the generated samples against test suites.
     with ThreadPoolExecutor(max_workers=n_workers) as executor:

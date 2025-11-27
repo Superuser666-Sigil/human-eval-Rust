@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import fcntl  # For file locking (Unix)
 from pathlib import Path
 from typing import Optional
 
@@ -136,16 +137,66 @@ def run_rustc_in_docker(
     Returns:
         CompletedProcess with returncode, stdout, stderr
     """
-    # Ensure Docker image exists
+    # Ensure Docker image exists (with process-safe file locking)
+    # Check if image exists first (fast path)
     check_result = subprocess.run(
         ["docker", "images", "-q", "human-eval-rust-sandbox"],
         capture_output=True,
         text=True
     )
-    if not check_result.stdout.strip():
-        print("Building Docker image for evaluation sandbox...", file=__import__("sys").stderr)
-        if not build_docker_image():
-            raise SandboxError("Failed to build Docker image. Run with --sandbox-mode=none for local dev.")
+    if check_result.stdout.strip():
+        # Image exists, proceed
+        pass
+    else:
+        # Image doesn't exist - need to build it with file lock to prevent multiple processes
+        lock_file_path = Path(tempfile.gettempdir()) / "human-eval-rust-docker-build.lock"
+        
+        try:
+            # Open lock file in append mode (create if doesn't exist)
+            lock_file = open(lock_file_path, "a")
+            try:
+                # Try to acquire exclusive lock (non-blocking)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    # We have the lock - double-check image still doesn't exist
+                    check_result = subprocess.run(
+                        ["docker", "images", "-q", "human-eval-rust-sandbox"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if not check_result.stdout.strip():
+                        # Still doesn't exist, we build it
+                        print("Building Docker image for evaluation sandbox...", file=__import__("sys").stderr)
+                        if not build_docker_image():
+                            raise SandboxError("Failed to build Docker image. Run with --sandbox-mode=none for local dev.")
+                finally:
+                    # Release lock
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except BlockingIOError:
+                # Another process is building - wait for it to finish
+                # Release non-blocking lock attempt and acquire blocking lock
+                lock_file.close()
+                lock_file = open(lock_file_path, "a")
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Blocking wait
+                # Lock acquired means other process finished - verify image exists
+                check_result = subprocess.run(
+                    ["docker", "images", "-q", "human-eval-rust-sandbox"],
+                    capture_output=True,
+                    text=True
+                )
+                if not check_result.stdout.strip():
+                    raise SandboxError("Docker image build failed (another process attempted it). Run with --sandbox-mode=none for local dev.")
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except (OSError, IOError) as e:
+            # File locking not available (Windows or other issue) - fall back to simple check
+            # This is a best-effort approach
+            print("Warning: File locking not available, building Docker image without coordination", file=__import__("sys").stderr)
+            print("Building Docker image for evaluation sandbox...", file=__import__("sys").stderr)
+            if not build_docker_image():
+                raise SandboxError("Failed to build Docker image. Run with --sandbox-mode=none for local dev.")
+        finally:
+            if 'lock_file' in locals():
+                lock_file.close()
     
     # Validate rustc is available in the sandbox (fail fast if broken)
     # Only check once per process to avoid performance overhead
