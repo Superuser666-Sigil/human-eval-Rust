@@ -424,12 +424,14 @@ def _rust_unsafe_execute(
             compile_args = ["--edition=2021", "--test"]
 
             # Use sandboxing if available and requested
-            # Note: sandbox_mode=None (explicit) means no sandboxing - this is intentional
-            # for library users who want direct control. CLI auto-detects when None.
+            # sandbox_mode=None means "auto-detect" (use sandbox if available)
+            # sandbox_mode="none" means explicitly disable sandboxing
+            # The sandbox module handles None as auto-detect
+            effective_mode = sandbox_mode  # None = auto-detect in sandbox.py
+            
             use_sandbox = (
                 SANDBOX_AVAILABLE
-                and sandbox_mode is not None
-                and sandbox_mode != "none"
+                and effective_mode != "none"
             )
 
             try:
@@ -442,7 +444,7 @@ def _rust_unsafe_execute(
                                 compile_args,
                                 timeout=timeout,
                                 capture_output=True,
-                                sandbox_mode=sandbox_mode,
+                                sandbox_mode=effective_mode,  # may be None -> auto-detect
                             )
                         except SandboxError as e:
                             result.append(f"failed: sandbox error: {e}")
@@ -467,7 +469,7 @@ def _rust_unsafe_execute(
                                 test_binary,
                                 timeout=timeout,
                                 capture_output=True,
-                                sandbox_mode=sandbox_mode,
+                                sandbox_mode=effective_mode,  # may be None -> auto-detect
                             )
                         except SandboxError as e:
                             result.append(f"failed: sandbox error: {e}")
