@@ -15,8 +15,12 @@ from typing import List, Optional, Union
 import numpy as np
 import tqdm
 
-from human_eval.data import (get_human_eval_dataset, read_problems,
-                             stream_jsonl, write_jsonl)
+from human_eval.data import (
+    get_human_eval_dataset,
+    read_problems,
+    stream_jsonl,
+    write_jsonl,
+)
 from human_eval.execution import check_correctness
 
 
@@ -98,8 +102,7 @@ def evaluate_functional_correctness(
         sandbox_mode is None and resolved_language == "rust"
     ):
         try:
-            from human_eval.sandbox import (build_docker_image,
-                                            check_docker_available)
+            from human_eval.sandbox import build_docker_image, check_docker_available
 
             if check_docker_available():
                 # Check if image exists

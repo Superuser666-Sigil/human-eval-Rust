@@ -52,8 +52,10 @@ def entry_point(
     # Auto-detect sandbox mode if not specified
     if sandbox_mode is None or sandbox_mode == "auto":
         try:
-            from human_eval.sandbox import (check_docker_available,
-                                            check_firejail_available)
+            from human_eval.sandbox import (
+                check_docker_available,
+                check_firejail_available,
+            )
 
             if check_docker_available():
                 sandbox_mode = "docker"
