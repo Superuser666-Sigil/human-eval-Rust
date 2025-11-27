@@ -7,8 +7,9 @@ Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
 Version: 1.3.8
 """
 
-import fire
 import sys
+
+import fire
 
 from human_eval.data import get_human_eval_dataset
 from human_eval.evaluation import evaluate_functional_correctness
@@ -51,24 +52,48 @@ def entry_point(
     # Auto-detect sandbox mode if not specified
     if sandbox_mode is None or sandbox_mode == "auto":
         try:
-            from human_eval.sandbox import check_docker_available, check_firejail_available
-            
+            from human_eval.sandbox import (
+                check_docker_available,
+                check_firejail_available,
+            )
+
             if check_docker_available():
                 sandbox_mode = "docker"
-                print("Using Docker sandboxing (auto-detected)", file=__import__("sys").stderr)
+                print(
+                    "Using Docker sandboxing (auto-detected)",
+                    file=__import__("sys").stderr,
+                )
             elif check_firejail_available():
                 sandbox_mode = "firejail"
-                print("Using Firejail sandboxing (auto-detected)", file=__import__("sys").stderr)
+                print(
+                    "Using Firejail sandboxing (auto-detected)",
+                    file=__import__("sys").stderr,
+                )
             else:
                 sandbox_mode = "none"
-                print("WARNING: No sandboxing available (Docker/Firejail not found)", file=__import__("sys").stderr)
-                print("         Evaluation will run with process isolation only.", file=__import__("sys").stderr)
-                print("         Install Docker for secure evaluation in production.", file=__import__("sys").stderr)
+                print(
+                    "WARNING: No sandboxing available (Docker/Firejail not found)",
+                    file=__import__("sys").stderr,
+                )
+                print(
+                    "         Evaluation will run with process isolation only.",
+                    file=__import__("sys").stderr,
+                )
+                print(
+                    "         Install Docker for secure evaluation in production.",
+                    file=__import__("sys").stderr,
+                )
         except ImportError:
             sandbox_mode = "none"
     elif sandbox_mode == "none":
-        print("WARNING: Sandboxing disabled via --sandbox-mode=none", file=__import__("sys").stderr)
-        print("         This is UNSAFE for untrusted LLM-generated code!", file=__import__("sys").stderr)
+        print(
+            "WARNING: Sandboxing disabled via --sandbox-mode=none",
+            file=__import__("sys").stderr,
+        )
+        print(
+            "         This is UNSAFE for untrusted LLM-generated code!",
+            file=__import__("sys").stderr,
+        )
     else:
         print(f"Using {sandbox_mode} sandboxing", file=__import__("sys").stderr)
 

@@ -7,24 +7,27 @@ Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
 Version: 1.3.8
 """
 
-from collections import defaultdict, Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Union, Iterable, Dict, Optional
 import itertools
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Union
 
 import numpy as np
 import tqdm
 
-import os
-
-from human_eval.data import get_human_eval_dataset, read_problems, stream_jsonl, write_jsonl
+from human_eval.data import (
+    get_human_eval_dataset,
+    read_problems,
+    stream_jsonl,
+    write_jsonl,
+)
 from human_eval.execution import check_correctness
 
 
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
     num_correct: Union[List[int], np.ndarray],
-    k: int
+    k: int,
 ) -> np.ndarray:
     """
     Estimates pass@k of each problem and returns them in an array.
@@ -44,7 +47,9 @@ def estimate_pass_at_k(
         assert len(num_samples) == len(num_correct)
         num_samples_it = iter(num_samples)
 
-    return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
+    return np.array(
+        [estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)]
+    )
 
 
 def _resolve_language(language: Optional[str], problem_file: str) -> str:
@@ -72,7 +77,7 @@ def evaluate_functional_correctness(
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl" (one JSON object per sample result).
-    
+
     Args:
         sample_file: Path to JSONL file with completions
         k: List of pass@k values to compute
@@ -91,27 +96,43 @@ def evaluate_functional_correctness(
     resolved_language = _resolve_language(language, problem_file)
 
     problems = read_problems(problem_file)
-    
+
     # Pre-build Docker image if using Docker sandbox (before starting parallel workers)
-    if sandbox_mode == "docker" or (sandbox_mode is None and resolved_language == "rust"):
+    if sandbox_mode == "docker" or (
+        sandbox_mode is None and resolved_language == "rust"
+    ):
         try:
-            from human_eval.sandbox import check_docker_available, build_docker_image
+            from human_eval.sandbox import build_docker_image, check_docker_available
+
             if check_docker_available():
                 # Check if image exists
                 import subprocess
+
                 check_result = subprocess.run(
                     ["docker", "images", "-q", "human-eval-rust-sandbox"],
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 if not check_result.stdout.strip():
-                    print("Pre-building Docker image for evaluation sandbox (this may take a few minutes)...", file=__import__("sys").stderr)
+                    print(
+                        "Pre-building Docker image for evaluation sandbox (this may take a few minutes)...",
+                        file=__import__("sys").stderr,
+                    )
                     if not build_docker_image():
-                        print("WARNING: Docker image build failed. Evaluation may fail.", file=__import__("sys").stderr)
+                        print(
+                            "WARNING: Docker image build failed. Evaluation may fail.",
+                            file=__import__("sys").stderr,
+                        )
                     else:
-                        print("✓ Docker image built successfully", file=__import__("sys").stderr)
+                        print(
+                            "✓ Docker image built successfully",
+                            file=__import__("sys").stderr,
+                        )
         except Exception as e:
-            print(f"WARNING: Could not pre-build Docker image: {e}", file=__import__("sys").stderr)
+            print(
+                f"WARNING: Could not pre-build Docker image: {e}",
+                file=__import__("sys").stderr,
+            )
 
     # Check the generated samples against test suites.
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
@@ -127,9 +148,7 @@ def evaluate_functional_correctness(
             problem = problems.get(task_id)
 
             if problem is None:
-                raise KeyError(
-                    f"Unknown task_id '{task_id}' in {sample_file}."
-                )
+                raise KeyError(f"Unknown task_id '{task_id}' in {sample_file}.")
 
             completion = sample["completion"]
             args = (
@@ -164,8 +183,11 @@ def evaluate_functional_correctness(
     correct = np.array(correct)
 
     ks = k
-    pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
-                 for k in ks if (total >= k).all()}
+    pass_at_k = {
+        f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
+        for k in ks
+        if (total >= k).all()
+    }
 
     # Finally, save the results in one file:
     # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
@@ -183,10 +205,12 @@ def evaluate_functional_correctness(
 
     return pass_at_k
 
-
     ks = k
-    pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
-                 for k in ks if (total >= k).all()}
+    pass_at_k = {
+        f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
+        for k in ks
+        if (total >= k).all()
+    }
 
     # Finally, save the results in one file:
     # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)

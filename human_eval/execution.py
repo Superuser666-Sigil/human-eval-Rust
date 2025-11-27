@@ -37,7 +37,7 @@ def check_correctness(
     """
     # Import here to avoid circular import (rust_execution imports from execution)
     from human_eval import rust_execution
-    
+
     # Language parameter is kept for API compatibility but only Rust is supported
     if language and language.lower() != "rust":
         raise ValueError(f"Only Rust is supported. Got language: {language}")
@@ -106,10 +106,16 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     if maximum_memory_bytes is not None:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_AS, (maximum_memory_bytes, maximum_memory_bytes))
-        resource.setrlimit(resource.RLIMIT_DATA, (maximum_memory_bytes, maximum_memory_bytes))
+        resource.setrlimit(
+            resource.RLIMIT_AS, (maximum_memory_bytes, maximum_memory_bytes)
+        )
+        resource.setrlimit(
+            resource.RLIMIT_DATA, (maximum_memory_bytes, maximum_memory_bytes)
+        )
         if not platform.uname().system == "Darwin":
-            resource.setrlimit(resource.RLIMIT_STACK, (maximum_memory_bytes, maximum_memory_bytes))
+            resource.setrlimit(
+                resource.RLIMIT_STACK, (maximum_memory_bytes, maximum_memory_bytes)
+            )
 
     faulthandler.disable()
 
