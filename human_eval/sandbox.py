@@ -6,7 +6,7 @@ Uses Docker containers for isolation, with Firejail fallback for local developme
 Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.7
+Version: 1.3.8
 """
 
 import os
@@ -150,6 +150,7 @@ def run_rustc_in_docker(
     else:
         # Image doesn't exist - need to build it with file lock to prevent multiple processes
         lock_file_path = Path(tempfile.gettempdir()) / "human-eval-rust-docker-build.lock"
+        lock_file = None
         
         try:
             # Open lock file in append mode (create if doesn't exist)
@@ -195,7 +196,7 @@ def run_rustc_in_docker(
             if not build_docker_image():
                 raise SandboxError("Failed to build Docker image. Run with --sandbox-mode=none for local dev.")
         finally:
-            if 'lock_file' in locals():
+            if lock_file is not None:
                 lock_file.close()
     
     # Validate rustc is available in the sandbox (fail fast if broken)

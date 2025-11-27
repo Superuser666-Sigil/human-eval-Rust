@@ -4,7 +4,7 @@ Functional correctness evaluation for HumanEval Rust completions.
 Implements pass@k estimation and parallel test execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.7
+Version: 1.3.8
 """
 
 from collections import defaultdict, Counter
@@ -162,6 +162,27 @@ def evaluate_functional_correctness(
         correct.append(sum(passed))
     total = np.array(total)
     correct = np.array(correct)
+
+    ks = k
+    pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
+                 for k in ks if (total >= k).all()}
+
+    # Finally, save the results in one file:
+    # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
+    def combine_results():
+        for sample in stream_jsonl(sample_file):
+            task_id = sample["task_id"]
+            result = results[task_id].pop(0)
+            sample["result"] = result[1]["result"]
+            sample["passed"] = result[1]["passed"]
+            yield sample
+
+    out_file = sample_file + "_results.jsonl"
+    print(f"Writing results to {out_file}...")
+    write_jsonl(out_file, tqdm.tqdm(combine_results(), total=n_samples))
+
+    return pass_at_k
+
 
     ks = k
     pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
