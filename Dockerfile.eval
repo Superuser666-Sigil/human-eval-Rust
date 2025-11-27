@@ -1,4 +1,4 @@
-# Rust evaluation sandbox for HumanEval
+# Rust evaluation sandbox for human-eval-Rust
 # This container provides a minimal, isolated environment for compiling Rust code
 
 FROM rust:1.82-slim
