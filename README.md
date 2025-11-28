@@ -420,3 +420,15 @@ This evaluation harness is based on the HumanEval benchmark format described in 
 ## License
 
 MIT License
+
+## Security Model
+This release hardens Firejail usage with seccomp, capability dropping, CPU/file/process limits, and read-only mounts to reduce risk when running untrusted Rust code.
+
+## Metrics
+The evaluator now reports compile rate, main-free rate, clippy pass rate, average compile time, and binary sizes alongside pass@k.
+
+## Extended Dataset
+An extended Rust dataset stub is available at `data/HumanEval_rust_extended.jsonl` and can be regenerated with `scripts/generate_extended_dataset.py`.
+
+## Logging
+Use `human_eval.logging_config.setup_logging` to configure structured logging for CLI invocations.

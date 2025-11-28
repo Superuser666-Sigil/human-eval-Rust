@@ -1,0 +1,2 @@
+{"task_id": "Extended/0", "prompt": "fn identity(x: i32) -> i32 {", "test": "#[test] fn test_identity() { assert_eq!(identity(5), 5); }", "entry_point": "identity"}
+{"task_id": "Extended/1", "prompt": "fn sum_slice(values: &[i32]) -> i32 {", "test": "#[test] fn test_sum() { assert_eq!(sum_slice(&[1,2,3]), 6); }", "entry_point": "sum_slice"}

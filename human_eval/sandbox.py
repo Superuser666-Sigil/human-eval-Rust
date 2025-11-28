@@ -43,6 +43,19 @@ _host_rustc_validated = False
 _firejail_validated = False
 
 
+FIREJAIL_SECURITY_OPTS = [
+    "--seccomp",
+    "--caps.drop=all",
+    "--noroot",
+    "--rlimit-fsize=104857600",
+    "--rlimit-nproc=50",
+    "--rlimit-cpu=120",
+    "--read-only=/",
+    "--private-tmp",
+    "--nogroups",
+]
+
+
 def check_firejail_available() -> FirejailStatus:
     """
     Check if Firejail is available and get version info.
@@ -384,17 +397,21 @@ def run_rustc_with_firejail(
 
     # Firejail command with restrictions
     # Memory limit: 4GB (same as previous Docker config for H100 optimization)
-    firejail_cmd = [
-        "firejail",
-        "--quiet",
-        "--net=none",  # No network
-        "--private",  # Private filesystem
-        "--private-cwd",  # Private working directory
-        "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
-        f"--timeout={int(timeout)}",  # Timeout
-        "--cwd",
-        source_dir,
-    ] + rustc_cmd
+    firejail_cmd = (
+        [
+            "firejail",
+            "--quiet",
+            "--net=none",  # No network
+            "--private",  # Private filesystem
+            "--private-cwd",  # Private working directory
+            "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
+            f"--timeout={int(timeout)}",  # Timeout
+            "--cwd",
+            source_dir,
+        ]
+        + FIREJAIL_SECURITY_OPTS
+        + rustc_cmd
+    )
 
     try:
         result = subprocess.run(
@@ -431,18 +448,21 @@ def run_binary_with_firejail(
     binary_name = os.path.basename(binary_path)
 
     # Memory limit: 4GB (same as previous Docker config for H100 optimization)
-    firejail_cmd = [
-        "firejail",
-        "--quiet",
-        "--net=none",
-        "--private",
-        "--private-cwd",
-        "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
-        f"--timeout={int(timeout)}",
-        "--cwd",
-        binary_dir,
-        f"./{binary_name}",
-    ]
+    firejail_cmd = (
+        [
+            "firejail",
+            "--quiet",
+            "--net=none",
+            "--private",
+            "--private-cwd",
+            "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
+            f"--timeout={int(timeout)}",
+            "--cwd",
+            binary_dir,
+        ]
+        + FIREJAIL_SECURITY_OPTS
+        + [f"./{binary_name}"]
+    )
 
     try:
         result = subprocess.run(
