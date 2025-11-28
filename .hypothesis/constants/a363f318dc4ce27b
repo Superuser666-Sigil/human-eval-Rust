@@ -1,4 +1,0 @@
-# file: D:\human-eval-Rust\human_eval\data.py
-# hypothesis_version: 6.148.3
-
-['..', '.gz', 'HumanEval_rust.jsonl', 'ab', 'data', 'human_eval', 'r', 'rb', 'rt', 'rust', 'task_id', 'utf-8', 'wb']
