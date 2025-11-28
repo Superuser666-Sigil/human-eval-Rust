@@ -1,4 +1,4 @@
-# HumanEval Rust: Evaluation Harness for SigilDERG Ecosystem
+# HumanEval Rust v2.3.0: Evaluation Harness for SigilDERG Ecosystem
 
 A specialized evaluation harness for assessing Rust code generation capabilities of language models, designed as a core component of the [SigilDERG ecosystem](https://github.com/Superuser666-Sigil) for Rust-focused AI development.
 
@@ -64,9 +64,9 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=2.0.0`
-- `sigil-pipeline>=1.2.1`
-- `sigilderg-finetuner>=2.8.0`
+- `human-eval-rust>=2.3.0`
+- `sigil-pipeline>=2.3.0`
+- `sigilderg-finetuner>=3.0.0`
 
 ### Install from source
 

@@ -46,9 +46,24 @@ Firejail options include:
 --private-tmp          # Private /tmp
 --nogroups             # No supplementary groups
 --net=none             # No network access
---private              # Private filesystem
 --rlimit-as=4GB        # Memory limit
+--whitelist=$HOME/.cargo   # Allow Rust toolchain access
+--whitelist=$HOME/.rustup  # Allow rustup installation
 ```
+
+**Rust Toolchain Access:**
+
+The Firejail configuration uses `--whitelist` instead of `--private` to allow
+access to the Rust toolchain while maintaining security. The `--private` flag
+creates an isolated home directory, which blocks access to `~/.cargo/bin/rustc`.
+The `--whitelist` approach grants read-only access only to the specific directories
+required for Rust compilation:
+
+- `$HOME/.cargo` - Cargo binaries, registry cache, and configuration
+- `$HOME/.rustup` - Rust toolchain installations and components
+
+Environment variables `CARGO_HOME` and `RUSTUP_HOME` are preserved to ensure
+the sandbox can locate the toolchain correctly.
 
 ## Consequences
 

@@ -395,15 +395,28 @@ def run_rustc_with_firejail(
         ]
     )
 
+    # Get cargo/rustup paths for Firejail whitelist
+    # Rust toolchain is typically installed via rustup in ~/.cargo
+    home_dir = os.path.expanduser("~")
+    cargo_dir = os.environ.get("CARGO_HOME", os.path.join(home_dir, ".cargo"))
+    rustup_dir = os.environ.get("RUSTUP_HOME", os.path.join(home_dir, ".rustup"))
+
     # Firejail command with restrictions
     # Memory limit: 4GB (same as previous Docker config for H100 optimization)
+    # Using --whitelist instead of --private to allow access to Rust toolchain
+    # while still restricting access to the rest of the filesystem
     firejail_cmd = (
         [
             "firejail",
             "--quiet",
             "--net=none",  # No network
-            "--private",  # Private filesystem
-            "--private-cwd",  # Private working directory
+            f"--whitelist={cargo_dir}",  # Allow access to cargo binaries and registry
+            f"--whitelist={rustup_dir}",  # Allow access to rustup toolchains
+            f"--whitelist={source_dir}",  # Allow access to source directory
+            "--read-only=/usr",  # Read-only access to system libraries
+            "--read-only=/lib",  # Read-only access to system libraries
+            "--read-only=/lib64",  # Read-only access to system libraries (64-bit)
+            "--private-tmp",  # Private /tmp directory
             "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
             f"--timeout={int(timeout)}",  # Timeout
             "--cwd",
@@ -447,14 +460,23 @@ def run_binary_with_firejail(
     binary_dir = os.path.dirname(os.path.abspath(binary_path))
     binary_name = os.path.basename(binary_path)
 
+    # Get rustup path for Firejail whitelist (needed for Rust stdlib)
+    home_dir = os.path.expanduser("~")
+    rustup_dir = os.environ.get("RUSTUP_HOME", os.path.join(home_dir, ".rustup"))
+
     # Memory limit: 4GB (same as previous Docker config for H100 optimization)
+    # Using --whitelist instead of --private to allow access to Rust runtime libraries
     firejail_cmd = (
         [
             "firejail",
             "--quiet",
             "--net=none",
-            "--private",
-            "--private-cwd",
+            f"--whitelist={binary_dir}",  # Allow access to binary directory
+            f"--whitelist={rustup_dir}",  # Allow access to Rust stdlib (for dynamic linking)
+            "--read-only=/usr",  # Read-only access to system libraries
+            "--read-only=/lib",  # Read-only access to system libraries
+            "--read-only=/lib64",  # Read-only access to system libraries (64-bit)
+            "--private-tmp",  # Private /tmp directory
             "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
             f"--timeout={int(timeout)}",
             "--cwd",

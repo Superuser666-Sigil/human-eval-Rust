@@ -108,7 +108,7 @@ HumanEval Rust executes **untrusted, LLM-generated Rust code**. The security mod
 
 | Attack Vector | Mitigation |
 |---------------|------------|
-| Filesystem access | Pattern blocklist + Firejail `--private` |
+| Filesystem access | Pattern blocklist + Firejail `--whitelist` (limited to Rust toolchain) |
 | Network access | Pattern blocklist + Firejail `--net=none` |
 | Process execution | Pattern blocklist + Firejail `--noroot` |
 | Environment access | Pattern blocklist + Firejail isolation |
@@ -137,9 +137,19 @@ The following Firejail options are applied to all sandboxed executions:
 --private-tmp          # Private /tmp directory
 --nogroups             # Disable supplementary groups
 --net=none             # No network access
---private              # Private filesystem
 --rlimit-as=4GB        # Memory limit
+--whitelist=$HOME/.cargo   # Allow Rust toolchain access
+--whitelist=$HOME/.rustup  # Allow rustup installation
 ```
+
+**Rust Toolchain Whitelisting:**
+
+Instead of using `--private` (which creates an isolated home directory and blocks access to `~/.cargo/bin/rustc`), the sandbox uses `--whitelist` to grant read-only access to specific directories:
+
+- `$HOME/.cargo` - Cargo binaries, registry cache, and configuration
+- `$HOME/.rustup` - Rust toolchain installations and components
+
+This approach maintains strong isolation while allowing the Rust compiler and related tools to function correctly within the sandbox. Environment variables `CARGO_HOME` and `RUSTUP_HOME` are preserved to ensure proper toolchain location.
 
 ### Pattern Blocklist
 
