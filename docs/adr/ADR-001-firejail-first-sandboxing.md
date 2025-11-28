@@ -85,6 +85,9 @@ the sandbox can locate the toolchain correctly.
 - **Requires sudo for install**: System package manager needed
 - **Less isolation than containers**: Shares kernel with host
 - **No Windows protection**: Windows users have only pattern-based filtering
+- **CI container incompatibility**: Firejail's seccomp filters corrupt Python's
+  `os` module in containerized CI environments (GitHub Actions runners). Tests
+  must mock Firejail functionality; actual Firejail installation is skipped in CI.
 
 ### Neutral
 

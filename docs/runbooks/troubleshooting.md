@@ -230,6 +230,53 @@ with open('samples.jsonl') as f:
 "
 ```
 
+---
+
+## CI/CD Environment Issues
+
+### Issue: pytest INTERNALERROR with os module corruption
+
+**Symptoms:**
+
+- `TypeError: 'NoneType' object is not callable` for `os.chmod`, `os.getcwd`, `os.unlink`
+- Error occurs during pytest teardown, not in test code
+- Only happens in containerized CI (GitHub Actions, Docker)
+
+**Cause:**
+Firejail's seccomp filters are incompatible with containerized environments.
+Installing Firejail in GitHub Actions runners corrupts Python's `os` module
+at the C level.
+
+**Solution:**
+Do NOT install Firejail in CI. Tests should mock Firejail functionality:
+
+```yaml
+# .github/workflows/ci.yml
+# DO NOT include: sudo apt-get install -y firejail
+# Tests use mocks and sandbox_mode="none"
+```
+
+**Detection in Tests:**
+Use the `is_ci` fixture to detect CI environment:
+
+```python
+@pytest.fixture
+def is_ci() -> bool:
+    """Detect CI environment."""
+    return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+@pytest.fixture
+def skip_on_ci(is_ci: bool):
+    """Skip test in CI environment."""
+    if is_ci:
+        pytest.skip("Test not supported in CI environment")
+```
+
+**Reference:** See [ADR-001](../adr/ADR-001-firejail-first-sandboxing.md) for
+architectural context on the Firejail-first approach and its CI limitations.
+
+---
+
 ## Getting Help
 
 1. Check [GitHub Issues](https://github.com/Superuser666-Sigil/human-eval-Rust/issues)
