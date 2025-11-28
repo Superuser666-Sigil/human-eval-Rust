@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-eval-rust"
-version = "1.4.1"
+version = "1.4.2"
 description = "Evaluation harness for the HumanEval Rust problem solving dataset"
 readme = "README.md"
 requires-python = ">=3.12.10"
