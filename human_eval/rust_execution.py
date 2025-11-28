@@ -681,6 +681,6 @@ def rust_check_correctness(
         error_type=result_dict.get("error_type"),
         stderr=result_dict.get("stderr", ""),
         passed=result_dict.get("passed", False),
-        main_free=result_dict.get("main_free", _check_main_free(completion)),
+        main_free=result_dict.get("main_free", check_main_free(completion)),
         result=result_dict.get("result", ""),
     )
