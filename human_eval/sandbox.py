@@ -97,7 +97,7 @@ def create_dockerfile(dockerfile_path: Path):
     """Create the Dockerfile for the evaluation sandbox.
     
     Matches the approach used in SigilDERG-Finetuner for consistency:
-    - Uses rust:1.82-slim base image
+    - Uses rust:1.91.1-slim base image
     - Adds clippy and rustfmt components
     - Pre-downloads common Rust dependencies for --network=none support
     """
@@ -105,7 +105,7 @@ def create_dockerfile(dockerfile_path: Path):
 # This container provides a minimal, isolated environment for compiling Rust code
 # Matches the approach used in SigilDERG-Finetuner for consistency
 
-FROM rust:1.82-slim
+FROM rust:1.91.1-slim
 
 # Install clippy and rustfmt
 RUN rustup component add clippy rustfmt
