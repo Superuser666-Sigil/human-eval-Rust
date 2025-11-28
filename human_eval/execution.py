@@ -7,24 +7,26 @@ Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
 Version: 2.0.0
 """
 
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false
+
 import contextlib
 import faulthandler
 import os
 import platform
-import signal
 import tempfile
-from typing import Dict, Optional
+import threading
+from typing import Optional
 
 
 def check_correctness(
-    problem: Dict,
+    problem: dict,
     completion: str,
     timeout: float,
     completion_id: Optional[int] = None,
     language: Optional[str] = None,
     sandbox_mode: Optional[str] = None,
     enforce_policy: bool = True,
-) -> Dict:
+) -> dict:
     """
     Evaluates the functional correctness of a Rust completion by compiling
     and running the test suite provided in the problem.
@@ -49,15 +51,23 @@ def check_correctness(
 
 @contextlib.contextmanager
 def time_limit(seconds: float):
-    def signal_handler(signum, frame):
-        raise TimeoutException("Timed out!")
+    """Thread-safe timeout context manager using Timer."""
 
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    signal.signal(signal.SIGALRM, signal_handler)
+    timed_out = threading.Event()
+
+    def timeout_handler():
+        timed_out.set()
+
+    timer = threading.Timer(seconds, timeout_handler)
+    timer.start()
     try:
-        yield
+        yield timed_out
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        if timer:
+            timer.cancel()
+
+    if timed_out.is_set():
+        raise TimeoutException("Timed out!")
 
 
 @contextlib.contextmanager

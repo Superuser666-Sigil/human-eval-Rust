@@ -9,7 +9,11 @@ Version: 2.0.0
 
 import multiprocessing
 import os
+import re
+import shutil
 import subprocess
+import time
+import unicodedata
 
 # Use relative import to avoid circular dependency with execution.py
 from .execution import TimeoutException, create_tempdir, reliability_guard, time_limit
@@ -232,14 +236,83 @@ DISALLOWED_COMPLETION_PATTERNS = [
     "std::panic::catch_unwind",
     "std::panic::resume_unwind",
     "std::panic::AssertUnwindSafe",
+    # Compile-time code execution
+    "include!",
+    "include_str!",
+    "include_bytes!",
+    "env!",
+    "option_env!",
+    "concat!",
+    "file!",
+    "line!",
+    "column!",
+    "module_path!",
+    # Assembly
+    "asm!",
+    "global_asm!",
+    # FFI/Linking
+    "#[link",
+    "#[no_mangle]",
+    "#[export_name",
+    "build.rs",
+    # Proc macros
+    "proc_macro",
+    "#[derive(",
+    # Additional dangerous patterns
+    "std::intrinsics",
+    "core::intrinsics",
 ]
 
 
+def _normalize_unicode(text: str) -> str:
+    """Normalize Unicode to ASCII to prevent homoglyph attacks."""
+
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+
+
 def _sanitize_rust_completion(completion: str) -> str | None:
-    lowered_completion = completion.lower()
+    """Check for disallowed patterns with Unicode normalization."""
+
+    normalized = _normalize_unicode(completion.lower())
+
     for pattern in DISALLOWED_COMPLETION_PATTERNS:
-        if pattern.lower() in lowered_completion:
+        if pattern.lower() in normalized:
             return f"disallowed usage of {pattern}"
+
+    if re.search(
+        r"r#*\".*?(unsafe|std::fs|std::process).*?\"#*",
+        completion,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        return "disallowed pattern in raw string"
+
+    return None
+
+
+MAX_COMPLETION_LENGTH = 100_000
+MAX_COMPLETION_LINES = 5_000
+
+
+def _validate_completion(completion: str) -> str | None:
+    """Validate completion content. Returns error message or None."""
+
+    if not completion:
+        return "empty completion"
+
+    if len(completion) > MAX_COMPLETION_LENGTH:
+        return f"completion too long ({len(completion)} > {MAX_COMPLETION_LENGTH})"
+
+    if completion.count("\n") > MAX_COMPLETION_LINES:
+        return f"too many lines (> {MAX_COMPLETION_LINES})"
+
+    if "\x00" in completion:
+        return "null byte in completion"
+
+    try:
+        completion.encode("utf-8")
+    except UnicodeEncodeError:
+        return "invalid UTF-8 encoding"
+
     return None
 
 
@@ -409,6 +482,56 @@ def check_main_free(completion: str) -> bool:
     return not bool(re.search(main_pattern, completion, re.IGNORECASE))
 
 
+def _run_clippy_check(source_path: str, timeout: float) -> tuple[bool, str]:
+    """Run clippy on compiled code and return (passed, warnings)."""
+
+    result = subprocess.run(
+        ["cargo", "clippy", "--", "-D", "warnings"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=os.path.dirname(source_path),
+    )
+    return result.returncode == 0, result.stderr
+
+
+class ReliabilityContext:
+    """Context manager that provides isolated reliability guards."""
+
+    def __init__(self, maximum_memory_bytes: int | None = None):
+        self.maximum_memory_bytes = maximum_memory_bytes
+        self._original_functions: dict[str, object] = {}
+
+    def __enter__(self):
+        # Store originals
+        self._original_functions = {
+            "rmtree": shutil.rmtree,
+            "rmdir": os.rmdir,
+            "chdir": os.chdir,
+            "Popen": subprocess.Popen,
+        }
+        reliability_guard(self.maximum_memory_bytes)
+        return self
+
+    def __exit__(self, *args):
+        shutil.rmtree = self._original_functions["rmtree"]
+        os.rmdir = self._original_functions["rmdir"]
+        os.chdir = self._original_functions["chdir"]
+        subprocess.Popen = self._original_functions["Popen"]
+
+
+DETERMINISTIC_RUSTC_FLAGS = [
+    "--edition=2021",
+    "--test",
+    "-C",
+    "opt-level=0",
+    "-C",
+    "debuginfo=0",
+    "-C",
+    "incremental=false",
+]
+
+
 def _rust_unsafe_execute(
     problem: dict,
     completion: str,
@@ -430,21 +553,13 @@ def _rust_unsafe_execute(
         "result": str,  # Legacy field for compatibility
     }
     """
-    with create_tempdir() as temp_dir:
-        import shutil
-
-        rmtree = shutil.rmtree
-        rmdir = os.rmdir
-        chdir = os.chdir
-        popen = subprocess.Popen
-
-        reliability_guard()
-        subprocess.Popen = popen
-
-        # Initialize result dict with enhanced schema
+    with create_tempdir() as temp_dir, ReliabilityContext():
         result_dict = {
             "compile_ok": None,
             "test_ok": None,
+            "clippy_ok": None,
+            "compile_time_ms": None,
+            "binary_size_bytes": None,
             "error_type": None,
             "stderr": "",
             "passed": False,
@@ -452,144 +567,152 @@ def _rust_unsafe_execute(
             "result": "",
         }
 
-        try:
-            # Preflight check: rustc availability
-            rustc_available, rustc_error = _check_rustc_available(sandbox_mode)
-            if not rustc_available:
-                result_dict["error_type"] = "infra_missing_toolchain"
-                result_dict["stderr"] = rustc_error or "rustc not available"
-                result_dict["result"] = f"failed: {result_dict['stderr']}"
-                result.append(result_dict)
-                return
+        rustc_available, rustc_error = _check_rustc_available(sandbox_mode)
+        if not rustc_available:
+            result_dict["error_type"] = "infra_missing_toolchain"
+            result_dict["stderr"] = rustc_error or "rustc not available"
+            result_dict["result"] = f"failed: {result_dict['stderr']}"
+            result.append(result_dict)
+            return
 
-            # Handle empty completions - never drop silently
-            if not completion or not completion.strip():
+        validation_error = _validate_completion(completion)
+        if validation_error:
+            result_dict["error_type"] = "compile_error"
+            result_dict["stderr"] = validation_error
+            result_dict["result"] = f"filtered: {validation_error}"
+            result.append(result_dict)
+            return
+
+        entry_point = problem.get("entry_point", "")
+        cleaned_completion = _extract_function_body(completion, entry_point)
+
+        if enforce_policy:
+            violation = _sanitize_rust_completion(cleaned_completion)
+            if violation:
                 result_dict["error_type"] = "compile_error"
-                result_dict["stderr"] = "empty completion"
-                result_dict["result"] = "filtered: empty completion"
+                result_dict["stderr"] = violation
+                result_dict["result"] = f"failed: {violation}"
                 result.append(result_dict)
                 return
 
-            # Clean up completion: extract function body and remove extra code
-            entry_point = problem.get("entry_point", "")
-            cleaned_completion = _extract_function_body(completion, entry_point)
+        source_path = os.path.join(temp_dir, "solution.rs")
+        test_binary = os.path.join(temp_dir, "solution_test")
 
-            # Policy enforcement (pattern filtering) - can be disabled for pure HumanEval compatibility
-            if enforce_policy:
-                violation = _sanitize_rust_completion(cleaned_completion)
-                if violation:
+        with open(source_path, "w", encoding="utf-8") as source_file:
+            source_file.write(problem["prompt"])
+            source_file.write(cleaned_completion)
+            source_file.write("\n\n")
+            source_file.write(problem["test"])
+            source_file.write("\n")
+
+        compile_args = DETERMINISTIC_RUSTC_FLAGS.copy()
+
+        effective_mode = sandbox_mode
+        use_sandbox = SANDBOX_AVAILABLE and effective_mode != "none"
+
+        timed_out = None
+        try:
+            with time_limit(timeout) as timed_out_event:
+                timed_out = timed_out_event
+                start_time = time.perf_counter()
+                if use_sandbox:
+                    try:
+                        compile_result = run_rustc_sandboxed(
+                            source_path,
+                            test_binary,
+                            compile_args,
+                            timeout=timeout,
+                            capture_output=True,
+                            sandbox_mode=effective_mode,
+                        )
+                    except SandboxError as e:
+                        result_dict["error_type"] = "infra_missing_toolchain"
+                        result_dict["stderr"] = str(e)
+                        result_dict["result"] = f"failed: sandbox error: {e}"
+                        result.append(result_dict)
+                        return
+                else:
+                    compile_result = subprocess.run(
+                        ["rustc"] + compile_args + [source_path, "-o", test_binary],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
+
+                result_dict["compile_time_ms"] = int(
+                    (time.perf_counter() - start_time) * 1000
+                )
+                result_dict["compile_ok"] = compile_result.returncode == 0
+                if compile_result.returncode != 0:
+                    failure = (
+                        compile_result.stderr.strip() or compile_result.stdout.strip()
+                    )
                     result_dict["error_type"] = "compile_error"
-                    result_dict["stderr"] = violation
-                    result_dict["result"] = f"failed: {violation}"
+                    result_dict["stderr"] = failure or "compile error"
+                    result_dict["result"] = f"failed: {result_dict['stderr']}"
                     result.append(result_dict)
                     return
 
-            source_path = os.path.join(temp_dir, "solution.rs")
-            test_binary = os.path.join(temp_dir, "solution_test")
+                if os.path.exists(test_binary):
+                    result_dict["binary_size_bytes"] = os.path.getsize(test_binary)
 
-            with open(source_path, "w", encoding="utf-8") as source_file:
-                source_file.write(problem["prompt"])
-                source_file.write(cleaned_completion)
-                source_file.write("\n\n")
-                source_file.write(problem["test"])
-                source_file.write("\n")
+                if shutil.which("cargo"):
+                    try:
+                        clippy_ok, clippy_stderr = _run_clippy_check(
+                            source_path, timeout
+                        )
+                        result_dict["clippy_ok"] = clippy_ok
+                        if not clippy_ok:
+                            result_dict["stderr"] = clippy_stderr
+                    except Exception as exc:  # noqa: BLE001
+                        result_dict["clippy_ok"] = False
+                        result_dict["stderr"] = str(exc)
 
-            compile_args = ["--edition=2021", "--test"]
-
-            # Use sandboxing if available and requested
-            effective_mode = sandbox_mode
-            use_sandbox = SANDBOX_AVAILABLE and effective_mode != "none"
-
-            try:
-                with time_limit(timeout):
-                    if use_sandbox:
-                        try:
-                            compile_result = run_rustc_sandboxed(
-                                source_path,
-                                test_binary,
-                                compile_args,
-                                timeout=timeout,
-                                capture_output=True,
-                                sandbox_mode=effective_mode,
-                            )
-                        except SandboxError as e:
-                            result_dict["error_type"] = "infra_missing_toolchain"
-                            result_dict["stderr"] = str(e)
-                            result_dict["result"] = f"failed: sandbox error: {e}"
-                            result.append(result_dict)
-                            return
-                    else:
-                        compile_result = subprocess.run(
-                            ["rustc"] + compile_args + [source_path, "-o", test_binary],
-                            capture_output=True,
-                            text=True,
+                if use_sandbox:
+                    try:
+                        test_result = run_binary_sandboxed(
+                            test_binary,
                             timeout=timeout,
+                            capture_output=True,
+                            sandbox_mode=effective_mode,
                         )
-
-                    # Track compile status
-                    result_dict["compile_ok"] = compile_result.returncode == 0
-                    if compile_result.returncode != 0:
-                        failure = (
-                            compile_result.stderr.strip()
-                            or compile_result.stdout.strip()
-                        )
-                        result_dict["error_type"] = "compile_error"
-                        result_dict["stderr"] = failure or "compile error"
-                        result_dict["result"] = f"failed: {result_dict['stderr']}"
+                    except SandboxError as e:
+                        result_dict["error_type"] = "runtime_error"
+                        result_dict["stderr"] = str(e)
+                        result_dict["result"] = f"failed: sandbox error: {e}"
                         result.append(result_dict)
                         return
+                else:
+                    test_result = subprocess.run(
+                        [test_binary],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                    )
 
-                    # Run tests (also sandboxed if using sandbox)
-                    if use_sandbox:
-                        try:
-                            test_result = run_binary_sandboxed(
-                                test_binary,
-                                timeout=timeout,
-                                capture_output=True,
-                                sandbox_mode=effective_mode,
-                            )
-                        except SandboxError as e:
-                            result_dict["error_type"] = "runtime_error"
-                            result_dict["stderr"] = str(e)
-                            result_dict["result"] = f"failed: sandbox error: {e}"
-                            result.append(result_dict)
-                            return
-                    else:
-                        test_result = subprocess.run(
-                            [test_binary],
-                            capture_output=True,
-                            text=True,
-                            timeout=timeout,
-                        )
+                if timed_out and timed_out.is_set():
+                    raise TimeoutException("Timed out!")
 
-                    # Track test status
-                    result_dict["test_ok"] = test_result.returncode == 0
-                    if test_result.returncode == 0:
-                        result_dict["passed"] = True
-                        result_dict["result"] = "passed"
-                    else:
-                        failure = (
-                            test_result.stderr.strip() or test_result.stdout.strip()
-                        )
-                        result_dict["error_type"] = "assertion_failure"
-                        result_dict["stderr"] = failure or "tests failed"
-                        result_dict["result"] = f"failed: {result_dict['stderr']}"
+                result_dict["test_ok"] = test_result.returncode == 0
+                if test_result.returncode == 0:
+                    result_dict["passed"] = True
+                    result_dict["result"] = "passed"
+                else:
+                    failure = test_result.stderr.strip() or test_result.stdout.strip()
+                    result_dict["error_type"] = "assertion_failure"
+                    result_dict["stderr"] = failure or "tests failed"
+                    result_dict["result"] = f"failed: {result_dict['stderr']}"
 
-            except (TimeoutException, subprocess.TimeoutExpired):
-                result_dict["error_type"] = "runtime_error"
-                result_dict["stderr"] = "timeout"
-                result_dict["result"] = "timed out"
-            except BaseException as exc:  # noqa: BLE001
-                result_dict["error_type"] = "runtime_error"
-                result_dict["stderr"] = str(exc)
-                result_dict["result"] = f"failed: {exc}"
+        except (TimeoutException, subprocess.TimeoutExpired):
+            result_dict["error_type"] = "runtime_error"
+            result_dict["stderr"] = "timeout"
+            result_dict["result"] = "timed out"
+        except BaseException as exc:  # noqa: BLE001
+            result_dict["error_type"] = "runtime_error"
+            result_dict["stderr"] = str(exc)
+            result_dict["result"] = f"failed: {exc}"
 
             result.append(result_dict)
-        finally:
-            shutil.rmtree = rmtree
-            os.rmdir = rmdir
-            os.chdir = chdir
-            subprocess.Popen = popen
 
 
 def rust_check_correctness(
@@ -629,47 +752,51 @@ def rust_check_correctness(
     """
 
     manager = multiprocessing.Manager()
-    result = manager.list()
+    try:
+        result = manager.list()
 
-    process = multiprocessing.Process(
-        target=_rust_unsafe_execute,
-        args=(problem, completion, timeout, result, sandbox_mode, enforce_policy),
-    )
-    process.start()
-    process.join(timeout=timeout + 1)
-    if process.is_alive():
-        process.kill()
+        process = multiprocessing.Process(
+            target=_rust_unsafe_execute,
+            args=(problem, completion, timeout, result, sandbox_mode, enforce_policy),
+        )
+        process.start()
+        process.join(timeout=timeout + 1)
+        if process.is_alive():
+            process.kill()
+            process.join()
 
-    # Handle timeout case - never drop silently
-    if not result:
-        result_dict = {
-            "compile_ok": None,
-            "test_ok": None,
-            "error_type": "runtime_error",
-            "stderr": "process timeout",
-            "passed": False,
-            "main_free": check_main_free(completion),
-            "result": "timed out",
-        }
-        result.append(result_dict)
+        if not result:
+            result_dict = {
+                "compile_ok": None,
+                "test_ok": None,
+                "error_type": "runtime_error",
+                "stderr": "process timeout",
+                "passed": False,
+                "main_free": check_main_free(completion),
+                "result": "timed out",
+            }
+            result.append(result_dict)
 
-    # Extract result dict (should be first element)
-    result_dict = (
-        result[0]
-        if isinstance(result[0], dict)
-        else {"result": result[0], "passed": result[0] == "passed"}
-    )
+        result_dict = (
+            result[0]
+            if isinstance(result[0], dict)
+            else {"result": result[0], "passed": result[0] == "passed"}
+        )
 
-    # Build return dict with all fields
-    return dict(
-        task_id=problem["task_id"],
-        completion=completion,  # Always include original completion
-        completion_id=completion_id,
-        compile_ok=result_dict.get("compile_ok"),
-        test_ok=result_dict.get("test_ok"),
-        error_type=result_dict.get("error_type"),
-        stderr=result_dict.get("stderr", ""),
-        passed=result_dict.get("passed", False),
-        main_free=result_dict.get("main_free", check_main_free(completion)),
-        result=result_dict.get("result", ""),
-    )
+        return dict(
+            task_id=problem["task_id"],
+            completion=completion,
+            completion_id=completion_id,
+            compile_ok=result_dict.get("compile_ok"),
+            test_ok=result_dict.get("test_ok"),
+            clippy_ok=result_dict.get("clippy_ok"),
+            compile_time_ms=result_dict.get("compile_time_ms"),
+            binary_size_bytes=result_dict.get("binary_size_bytes"),
+            error_type=result_dict.get("error_type"),
+            stderr=result_dict.get("stderr", ""),
+            passed=result_dict.get("passed", False),
+            main_free=result_dict.get("main_free", check_main_free(completion)),
+            result=result_dict.get("result", ""),
+        )
+    finally:
+        manager.shutdown()

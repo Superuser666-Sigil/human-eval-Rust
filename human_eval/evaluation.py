@@ -8,12 +8,14 @@ Version: 2.0.0
 """
 
 import itertools
+import subprocess
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import tqdm
 
+from human_eval import EvaluationError
 from human_eval.data import (
     get_human_eval_dataset,
     read_problems,
@@ -39,7 +41,7 @@ def estimate_pass_at_k(
         """
         if n - c < k:
             return 1.0
-        return 1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1))
+        return float(1.0 - np.prod(1.0 - k / np.arange(n - c + 1, n + 1)))
 
     if isinstance(num_samples, int):
         num_samples_it = itertools.repeat(num_samples, len(num_correct))
@@ -62,6 +64,11 @@ def _resolve_language(language: str | None, problem_file: str) -> str:
             "This evaluator only supports Rust code evaluation."
         )
     return "rust"
+
+
+def _get_rustc_version() -> str:
+    result = subprocess.run(["rustc", "--version"], capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
 def evaluate_functional_correctness(
@@ -128,7 +135,11 @@ def evaluate_functional_correctness(
             completion_id[task_id] += 1
             n_samples += 1
 
-        assert len(completion_id) == len(problems), "Some problems are not attempted."
+        if len(completion_id) != len(problems):
+            missing = set(problems.keys()) - set(completion_id.keys())
+            raise EvaluationError(
+                f"Missing completions for {len(missing)} problems: {list(missing)[:5]}..."
+            )
 
         print("Running test suites...")
         all_results_list = []
@@ -147,6 +158,21 @@ def evaluate_functional_correctness(
         main_free_count / len(all_results_list) if all_results_list else 0.0
     )
 
+    clippy_total = sum(1 for r in all_results_list if r.get("clippy_ok") is not None)
+    clippy_pass = sum(1 for r in all_results_list if r.get("clippy_ok") is True)
+    clippy_rate = clippy_pass / clippy_total if clippy_total else 0.0
+
+    compile_times = [
+        r.get("compile_time_ms")
+        for r in all_results_list
+        if r.get("compile_time_ms") is not None
+    ]
+    binary_sizes = [
+        r.get("binary_size_bytes")
+        for r in all_results_list
+        if r.get("binary_size_bytes") is not None
+    ]
+
     # Calculate pass@k.
     total, correct = [], []
     for result in results.values():
@@ -164,17 +190,37 @@ def evaluate_functional_correctness(
         if (total >= k).all()
     }
 
-    # Add compile rate and main-free rate to metrics
     pass_at_k["compile_rate"] = compile_rate
     pass_at_k["main_free_rate"] = main_free_rate
+    pass_at_k["clippy_pass_rate"] = clippy_rate
+    pass_at_k["avg_compile_time_ms"] = (
+        float(np.mean(compile_times)) if compile_times else 0.0
+    )
+    pass_at_k["avg_binary_size_bytes"] = (
+        float(np.mean(binary_sizes)) if binary_sizes else 0.0
+    )
+    pass_at_k["rustc_version"] = _get_rustc_version()
 
     # Print metrics
     print("\nMetrics:")
     print(f"  Compile rate: {compile_rate:.4f} ({compile_rate * 100:.2f}%)")
     print(f"  Main-free rate: {main_free_rate:.4f} ({main_free_rate * 100:.2f}%)")
+    print(f"  Clippy pass rate: {clippy_rate:.4f} ({clippy_rate * 100:.2f}%)")
+    if compile_times:
+        print(f"  Avg compile time (ms): {np.mean(compile_times):.2f}")
+    if binary_sizes:
+        print(f"  Avg binary size (bytes): {np.mean(binary_sizes):.2f}")
     for metric, value in sorted(pass_at_k.items()):
-        if metric not in ("compile_rate", "main_free_rate"):
+        if metric not in (
+            "compile_rate",
+            "main_free_rate",
+            "clippy_pass_rate",
+            "avg_compile_time_ms",
+            "avg_binary_size_bytes",
+            "rustc_version",
+        ):
             print(f"  {metric}: {value:.4f} ({value * 100:.2f}%)")
+    print(f"  rustc: {pass_at_k['rustc_version']}")
 
     # Finally, save the results in one file:
     # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
@@ -195,11 +241,13 @@ def evaluate_functional_correctness(
             for i, sample in enumerate(task_samples):
                 if i < len(task_results):
                     result = task_results[i][1]
-                    # Merge enhanced schema into sample
                     sample.update(
                         {
                             "compile_ok": result.get("compile_ok"),
                             "test_ok": result.get("test_ok"),
+                            "clippy_ok": result.get("clippy_ok"),
+                            "compile_time_ms": result.get("compile_time_ms"),
+                            "binary_size_bytes": result.get("binary_size_bytes"),
                             "error_type": result.get("error_type"),
                             "stderr": result.get("stderr", ""),
                             "main_free": result.get("main_free"),
@@ -213,6 +261,9 @@ def evaluate_functional_correctness(
                         {
                             "compile_ok": None,
                             "test_ok": None,
+                            "clippy_ok": None,
+                            "compile_time_ms": None,
+                            "binary_size_bytes": None,
                             "error_type": "runtime_error",
                             "stderr": "missing result",
                             "main_free": check_main_free(sample.get("completion", "")),
@@ -220,7 +271,8 @@ def evaluate_functional_correctness(
                             "passed": False,
                         }
                     )
-            yield sample
+                assert sample is not None
+                yield sample
 
     out_file = sample_file + "_results.jsonl"
     print(f"Writing results to {out_file}...")

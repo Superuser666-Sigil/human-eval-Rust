@@ -7,10 +7,17 @@ Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
 Version: 2.0.0
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # Export rust_execution module so it can be imported
 # Use relative import to avoid circular dependency issues
 from . import rust_execution
 
-__all__ = ["rust_execution", "__version__"]
+
+class EvaluationError(Exception):
+    """Raised when evaluation cannot proceed due to data issues."""
+
+    pass
+
+
+__all__ = ["rust_execution", "__version__", "EvaluationError"]
