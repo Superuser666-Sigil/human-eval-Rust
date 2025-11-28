@@ -94,14 +94,21 @@ def build_docker_image() -> bool:
 
 
 def create_dockerfile(dockerfile_path: Path):
-    """Create the Dockerfile for the evaluation sandbox."""
-    dockerfile_content = """# Rust evaluation sandbox for HumanEval
+    """Create the Dockerfile for the evaluation sandbox.
+    
+    Matches the approach used in SigilDERG-Finetuner for consistency:
+    - Uses rust:1.82-slim base image
+    - Adds clippy and rustfmt components
+    - Pre-downloads common Rust dependencies for --network=none support
+    """
+    dockerfile_content = """# Rust evaluation sandbox for human-eval-Rust
 # This container provides a minimal, isolated environment for compiling Rust code
+# Matches the approach used in SigilDERG-Finetuner for consistency
 
 FROM rust:1.82-slim
 
-# Install rustc components (clippy and rustfmt not needed for basic compilation)
-RUN rustup component add rustfmt || true
+# Install clippy and rustfmt
+RUN rustup component add clippy rustfmt
 
 # Create a non-root user for additional security
 RUN useradd -m -u 1000 rustuser && \\
@@ -110,8 +117,25 @@ RUN useradd -m -u 1000 rustuser && \\
     mkdir -p /tmp/cargo-target && \\
     chown -R rustuser:rustuser /tmp/cargo-target
 
-# Switch to rustuser (ensures rustc is in PATH)
+# Pre-download required dependencies for evaluation (so they work with --network=none)
+# This allows the sandboxed container to compile code using these crates without network access
+# Must be done as rustuser so dependencies are cached in the correct user's home directory
 USER rustuser
+RUN mkdir -p /tmp/deps_cache && \\
+    cd /tmp/deps_cache && \\
+    cargo init --name deps_cache && \\
+    sed -i 's/^edition = .*/edition = "2021"/' Cargo.toml && \\
+    echo '    anyhow = "1.0"' >> Cargo.toml && \\
+    echo '    thiserror = "1.0"' >> Cargo.toml && \\
+    echo '    serde = { version = "1.0", features = ["derive"] }' >> Cargo.toml && \\
+    echo '    serde_json = "1.0"' >> Cargo.toml && \\
+    echo '    regex = "1.10"' >> Cargo.toml && \\
+    echo '    chrono = { version = "0.4", features = ["serde"] }' >> Cargo.toml && \\
+    echo '    uuid = { version = "1.6", features = ["v4", "serde"] }' >> Cargo.toml && \\
+    echo '    rand = "0.8"' >> Cargo.toml && \\
+    echo 'fn main() {}' > src/main.rs && \\
+    cargo build --release && \\
+    rm -rf /tmp/deps_cache
 
 # Set working directory
 WORKDIR /eval
