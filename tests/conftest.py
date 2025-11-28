@@ -36,6 +36,27 @@ def is_unix() -> bool:
 
 
 @pytest.fixture
+def is_ci() -> bool:
+    """Check if running in CI environment (GitHub Actions, etc.).
+
+    Detects CI by checking standard CI environment variables.
+    """
+    return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+@pytest.fixture
+def skip_on_ci(is_ci: bool):
+    """Skip test when running in CI environment.
+
+    Use for tests that require resources unavailable in CI containers,
+    such as actual firejail sandboxing (firejail's seccomp filters
+    are incompatible with containerized CI environments).
+    """
+    if is_ci:
+        pytest.skip("Test not supported in CI environment")
+
+
+@pytest.fixture
 def skip_on_windows(is_windows: bool):
     """Skip test on Windows."""
     if is_windows:
