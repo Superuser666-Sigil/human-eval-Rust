@@ -399,8 +399,14 @@ def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str |
                     return False, "rustc version check failed in Docker"
                 except Exception as e:
                     return False, f"Docker rustc check failed: {e}"
+            else:
+                # Docker mode requested but sandbox not available
+                if sandbox_mode == "docker":
+                    return False, "Docker sandbox mode requested but sandbox module not available"
+                # Auto-detect case: sandbox_mode is None and SANDBOX_AVAILABLE is False
+                # Fall through to local rustc check
         else:
-            # Check local rustc
+            # Check local rustc (for firejail, none, or auto-detect when sandbox unavailable)
             result = subprocess.run(
                 ["rustc", "--version"],
                 capture_output=True,
