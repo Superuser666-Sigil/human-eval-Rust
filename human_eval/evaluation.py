@@ -4,7 +4,7 @@ Functional correctness evaluation for HumanEval Rust completions.
 Implements pass@k estimation and parallel test execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.4.2
+Version: 1.4.3
 """
 
 import itertools
@@ -252,7 +252,7 @@ def evaluate_functional_correctness(
                         "result": "filtered: missing result",
                         "passed": False,
                     })
-                yield sample
+            yield sample
 
     out_file = sample_file + "_results.jsonl"
     print(f"Writing results to {out_file}...")
