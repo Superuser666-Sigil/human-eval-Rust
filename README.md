@@ -64,7 +64,7 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.4.4`
+- `human-eval-rust>=2.0.0`
 - `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
@@ -215,11 +215,12 @@ evaluate_functional_correctness samples.jsonl --n_workers=8
 # Custom timeout (default: 10.0s optimized for H100)
 evaluate_functional_correctness samples.jsonl --timeout=5.0
 
-# Sandboxing options (recommended for production)
-evaluate_functional_correctness samples.jsonl --sandbox-mode=docker
-evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail
-evaluate_functional_correctness samples.jsonl --sandbox-mode=auto  # Auto-detect (default)
-evaluate_functional_correctness samples.jsonl --sandbox-mode=none  # UNSAFE: local dev only
+# Sandboxing options
+evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail  # Recommended
+evaluate_functional_correctness samples.jsonl --sandbox-mode=none      # UNSAFE: local dev only
+
+# Non-interactive mode (for CI/automated pipelines)
+evaluate_functional_correctness samples.jsonl --allow-no-sandbox  # Required when Firejail unavailable
 
 # Policy enforcement (pattern filtering)
 evaluate_functional_correctness samples.jsonl --enforce-policy  # Default: enabled
@@ -231,37 +232,51 @@ evaluate_functional_correctness --help
 
 ### Security and Sandboxing
 
-**⚠️ Important**: This evaluator runs untrusted LLM-generated Rust code. For production use, **always use Docker or Firejail sandboxing**.
+**⚠️ Important**: This evaluator runs untrusted LLM-generated Rust code. For production use, **always use Firejail sandboxing**.
 
 The evaluator includes multiple layers of security:
 
 1. **Pattern-based filtering** (optional, enabled by default): Blocks dangerous code patterns before execution (filesystem, network, process operations, unsafe code, etc.). Can be disabled with `--no-enforce-policy` for pure HumanEval compatibility.
 2. **Process isolation**: Each evaluation runs in a separate process
-3. **Docker/Firejail sandboxing** (recommended): Full container/jail isolation with resource limits
+3. **Firejail sandboxing** (recommended): Full process jail isolation with resource limits
 
 **Policy Enforcement Modes**:
 - `--enforce-policy` (default): Enables pattern-based filtering for security. Use this for production evaluation of untrusted LLM-generated code.
 - `--no-enforce-policy`: Disables pattern filtering for pure HumanEval compatibility. Use this when you need exact 1:1 comparability with the original HumanEval benchmark format (research/publication mode).
 
 **Sandbox Modes**:
-- `docker` (recommended): Uses Docker containers with `--network=none`, read-only filesystem, memory/CPU limits
-- `firejail`: Uses Firejail for Linux systems without Docker
-- `auto` (default): Auto-detects available sandbox (Docker → Firejail → none)
+- `firejail` (recommended): Uses Firejail for Linux process isolation with `--net=none`, private filesystem, memory/CPU limits
 - `none`: No sandboxing (UNSAFE - only for local development with trusted code)
-
-**Docker Setup**:
-```bash
-# Docker image is built automatically on first use
-# Or build manually:
-docker build -t human-eval-rust-sandbox -f Dockerfile.eval .
-```
+- Auto-detect (default): Automatically detects Firejail availability; prompts for installation or unsafe mode if unavailable
 
 **Firejail Setup** (Linux only):
 ```bash
 # Install Firejail
 sudo apt-get install firejail  # Debian/Ubuntu
 # or
-sudo yum install firejail       # RHEL/CentOS
+sudo dnf install firejail      # Fedora/RHEL
+# or
+sudo yum install firejail      # CentOS
+# or
+sudo pacman -S firejail        # Arch Linux
+```
+
+**Interactive Installation Flow**:
+
+When Firejail is not available, the evaluator presents an interactive prompt:
+1. **Install Firejail**: Attempts automatic installation via system package manager
+2. **Cancel**: Exit without running evaluation
+3. **Proceed without sandbox**: Only after explicit confirmation (UNSAFE)
+
+**Non-Interactive Mode**:
+
+For CI/CD pipelines or automated scripts, use the `--allow-no-sandbox` flag to bypass interactive prompts:
+```bash
+# In CI, when Firejail is available
+evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail
+
+# In CI, when you've verified the environment is secure
+evaluate_functional_correctness samples.jsonl --sandbox-mode=none --allow-no-sandbox
 ```
 
 ## Dataset Format
@@ -340,7 +355,34 @@ Together, these metrics provide a complete picture of model performance for Rust
 
 ## Hardware Optimizations (H100 Configuration)
 
-## Version 1.3.2 Features
+Version 2.0.0+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
+
+### Default Configuration
+- **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)
+- **Timeout**: 10.0 seconds (default `--timeout=10.0`) - Increased from 3.0s to handle compilation latency on loaded systems
+- **Firejail Memory Limit**: 4GB per process - Handles complex, macro-heavy Rust code compilation
+
+### Resource Usage
+With 24 workers and 4GB memory per process:
+- **Maximum Memory Usage**: ~96GB (24 workers × 4GB) - Well within 225GB safety margin
+- **CPU Utilization**: ~92% (24/26 vCPUs) - Near-saturation for maximum throughput
+
+These defaults are optimized for production evaluation on high-end hardware. For smaller systems, you can override with `--n_workers` and `--timeout` flags.
+
+## Version 2.0.0 Breaking Changes
+
+**Docker Support Removed**: Version 2.0.0 removes Docker-based sandboxing in favor of Firejail-first architecture:
+- Simpler deployment: No Docker daemon required
+- Faster startup: No container overhead
+- Interactive installation: Prompts to install Firejail if missing
+- Non-interactive mode: `--allow-no-sandbox` for CI/CD pipelines
+
+**Migration from v1.x**:
+- If you were using `--sandbox-mode=docker`, switch to `--sandbox-mode=firejail`
+- Install Firejail on your system (see Firejail Setup above)
+- For CI/CD, use `--allow-no-sandbox` if running in a secure environment without Firejail
+
+## Version 1.3.2+ Features
 
 **Completion Extraction & Cleaning:**
 - Automatically extracts function bodies from model completions
@@ -350,28 +392,8 @@ Together, these metrics provide a complete picture of model performance for Rust
 - Improves evaluation accuracy by ensuring only the target function is tested
 
 **Robust Validation:**
-- Validates `rustc` availability in Docker sandbox before evaluation (fails fast if broken)
-- Validates `rustc` on host when using `sandbox_mode="none"`
+- Validates `rustc` availability before evaluation (fails fast if unavailable)
 - Prevents silent failures across thousands of samples
-
-**Docker Improvements:**
-- Fixed Docker container user context (ensures `rustc` is in PATH)
-- Improved error messages for sandbox setup issues
-
-Version 1.3.2+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
-
-### Default Configuration
-- **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)
-- **Timeout**: 10.0 seconds (default `--timeout=10.0`) - Increased from 3.0s to handle compilation latency on loaded systems
-- **Docker Memory Limit**: 4GB per container (increased from 512MB) - Handles complex, macro-heavy Rust code compilation
-- **Docker tmpfs Size**: 2GB (increased from 300MB) - Prevents "disk full" errors during build artifact generation
-
-### Resource Usage
-With 24 workers and 4GB memory per container:
-- **Maximum Memory Usage**: ~96GB (24 workers × 4GB) - Well within 225GB safety margin
-- **CPU Utilization**: ~92% (24/26 vCPUs) - Near-saturation for maximum throughput
-
-These defaults are optimized for production evaluation on high-end hardware. For smaller systems, you can override with `--n_workers` and `--timeout` flags.
 
 ## Known Issues
 
@@ -398,4 +420,3 @@ This evaluation harness is based on the HumanEval benchmark format described in 
 ## License
 
 MIT License
-

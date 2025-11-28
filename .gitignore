@@ -44,4 +44,5 @@ Thumbs.db
 # Project specific
 *.jsonl_results.jsonl
 *.jsonl_results.jsonl.gz
+.version-workflow.md
 

@@ -4,7 +4,7 @@ Command-line entry point for HumanEval Rust functional correctness evaluation.
 Provides CLI interface using Fire for evaluating Rust code completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.4.4
+Version: 2.0.0
 """
 
 import sys
@@ -23,6 +23,7 @@ def entry_point(
     problem_file: str | None = None,
     language: str | None = None,
     sandbox_mode: str | None = None,
+    allow_no_sandbox: bool = False,
     enforce_policy: bool = True,
 ):
     """
@@ -39,8 +40,13 @@ def entry_point(
         Rust HumanEval dataset.
       language: Kept for API compatibility but only "rust" is supported.
         If not provided, defaults to "rust".
-      sandbox_mode: Sandbox mode ("docker", "firejail", "none", or None for auto-detect).
-        Docker is recommended for production use. None auto-detects available sandbox.
+      sandbox_mode: Sandbox mode ("firejail" or "none").
+        - firejail (recommended): Uses Firejail for Linux process isolation
+        - none: No sandboxing (UNSAFE - only for local dev with trusted code)
+        If not specified, auto-detects Firejail availability.
+      allow_no_sandbox: Allow proceeding without sandbox in non-interactive mode.
+        Use with --sandbox-mode=none or when Firejail is unavailable.
+        Required for automated pipelines that accept unsandboxed execution.
       enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
         Set to False for pure HumanEval compatibility without security filtering.
         Use --no-enforce-policy to disable policy enforcement.
@@ -49,53 +55,41 @@ def entry_point(
     if problem_file is None:
         problem_file = get_human_eval_dataset(language)
 
-    # Auto-detect sandbox mode if not specified
-    if sandbox_mode is None or sandbox_mode == "auto":
-        try:
-            from human_eval.sandbox import (
-                check_docker_available,
-                check_firejail_available,
-            )
+    # Resolve sandbox mode with user interaction if needed
+    try:
+        from human_eval.sandbox import check_firejail_available, resolve_sandbox_mode
 
-            if check_docker_available():
-                sandbox_mode = "docker"
-                print(
-                    "Using Docker sandboxing (auto-detected)",
-                    file=__import__("sys").stderr,
-                )
-            elif check_firejail_available():
-                sandbox_mode = "firejail"
-                print(
-                    "Using Firejail sandboxing (auto-detected)",
-                    file=__import__("sys").stderr,
-                )
-            else:
-                sandbox_mode = "none"
-                print(
-                    "WARNING: No sandboxing available (Docker/Firejail not found)",
-                    file=__import__("sys").stderr,
-                )
-                print(
-                    "         Evaluation will run with process isolation only.",
-                    file=__import__("sys").stderr,
-                )
-                print(
-                    "         Install Docker for secure evaluation in production.",
-                    file=__import__("sys").stderr,
-                )
-        except ImportError:
-            sandbox_mode = "none"
-    elif sandbox_mode == "none":
-        print(
-            "WARNING: Sandboxing disabled via --sandbox-mode=none",
-            file=__import__("sys").stderr,
+        # Determine if we're in interactive mode (stdin is a TTY)
+        non_interactive = not sys.stdin.isatty()
+
+        resolved_mode = resolve_sandbox_mode(
+            sandbox_mode=sandbox_mode,
+            allow_no_sandbox=allow_no_sandbox,
+            non_interactive=non_interactive,
         )
+
+        if resolved_mode == "firejail":
+            status = check_firejail_available()
+            print(f"Using Firejail sandboxing ({status.version})", file=sys.stderr)
+        elif resolved_mode == "none":
+            if not allow_no_sandbox:
+                print(
+                    "⚠ WARNING: Running without sandbox. This is UNSAFE for untrusted code!",
+                    file=sys.stderr,
+                )
+
+        sandbox_mode = resolved_mode
+
+    except ImportError:
+        # Sandbox module not available
+        sandbox_mode = "none"
         print(
-            "         This is UNSAFE for untrusted LLM-generated code!",
-            file=__import__("sys").stderr,
+            "WARNING: Sandbox module not available, running without sandboxing",
+            file=sys.stderr,
         )
-    else:
-        print(f"Using {sandbox_mode} sandboxing", file=__import__("sys").stderr)
+    except SystemExit:
+        # User cancelled the prompt
+        raise
 
     results = evaluate_functional_correctness(
         sample_file,

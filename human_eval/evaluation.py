@@ -4,13 +4,12 @@ Functional correctness evaluation for HumanEval Rust completions.
 Implements pass@k estimation and parallel test execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.4.4
+Version: 2.0.0
 """
 
 import itertools
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Optional, Union
 
 import numpy as np
 import tqdm
@@ -26,8 +25,8 @@ from human_eval.rust_execution import check_main_free
 
 
 def estimate_pass_at_k(
-    num_samples: Union[int, List[int], np.ndarray],
-    num_correct: Union[List[int], np.ndarray],
+    num_samples: int | list[int] | np.ndarray,
+    num_correct: list[int] | np.ndarray,
     k: int,
 ) -> np.ndarray:
     """
@@ -53,7 +52,7 @@ def estimate_pass_at_k(
     )
 
 
-def _resolve_language(language: Optional[str], problem_file: str) -> str:
+def _resolve_language(language: str | None, problem_file: str) -> str:
     """
     Resolves the language for evaluation. Only Rust is supported.
     """
@@ -67,12 +66,12 @@ def _resolve_language(language: Optional[str], problem_file: str) -> str:
 
 def evaluate_functional_correctness(
     sample_file: str,
-    k: List[int] = [1, 10, 100],
+    k: list[int] = [1, 10, 100],
     n_workers: int = 4,
     timeout: float = 3.0,
-    problem_file: Optional[str] = None,
-    language: Optional[str] = None,
-    sandbox_mode: Optional[str] = None,
+    problem_file: str | None = None,
+    language: str | None = None,
+    sandbox_mode: str | None = None,
     enforce_policy: bool = True,
 ):
     """
@@ -86,7 +85,7 @@ def evaluate_functional_correctness(
         timeout: Per-sample timeout in seconds
         problem_file: Optional problem dataset file
         language: Language (only "rust" supported)
-        sandbox_mode: Sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+        sandbox_mode: Sandbox mode ("firejail", "none", or None for auto-detect)
         enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
             Set to False for pure HumanEval compatibility without security filtering.
     """
@@ -97,43 +96,6 @@ def evaluate_functional_correctness(
     resolved_language = _resolve_language(language, problem_file)
 
     problems = read_problems(problem_file)
-
-    # Pre-build Docker image if using Docker sandbox (before starting parallel workers)
-    if sandbox_mode == "docker" or (
-        sandbox_mode is None and resolved_language == "rust"
-    ):
-        try:
-            from human_eval.sandbox import build_docker_image, check_docker_available
-
-            if check_docker_available():
-                # Check if image exists
-                import subprocess
-
-                check_result = subprocess.run(
-                    ["docker", "images", "-q", "human-eval-rust-sandbox"],
-                    capture_output=True,
-                    text=True,
-                )
-                if not check_result.stdout.strip():
-                    print(
-                        "Pre-building Docker image for evaluation sandbox (this may take a few minutes)...",
-                        file=__import__("sys").stderr,
-                    )
-                    if not build_docker_image():
-                        print(
-                            "WARNING: Docker image build failed. Evaluation may fail.",
-                            file=__import__("sys").stderr,
-                        )
-                    else:
-                        print(
-                            "✓ Docker image built successfully",
-                            file=__import__("sys").stderr,
-                        )
-        except Exception as e:
-            print(
-                f"WARNING: Could not pre-build Docker image: {e}",
-                file=__import__("sys").stderr,
-            )
 
     # Check the generated samples against test suites.
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
@@ -181,7 +143,9 @@ def evaluate_functional_correctness(
     compile_rate = compile_ok_count / compile_total if compile_total > 0 else 0.0
 
     main_free_count = sum(1 for r in all_results_list if r.get("main_free") is True)
-    main_free_rate = main_free_count / len(all_results_list) if all_results_list else 0.0
+    main_free_rate = (
+        main_free_count / len(all_results_list) if all_results_list else 0.0
+    )
 
     # Calculate pass@k.
     total, correct = [], []
@@ -205,12 +169,12 @@ def evaluate_functional_correctness(
     pass_at_k["main_free_rate"] = main_free_rate
 
     # Print metrics
-    print(f"\nMetrics:")
-    print(f"  Compile rate: {compile_rate:.4f} ({compile_rate*100:.2f}%)")
-    print(f"  Main-free rate: {main_free_rate:.4f} ({main_free_rate*100:.2f}%)")
+    print("\nMetrics:")
+    print(f"  Compile rate: {compile_rate:.4f} ({compile_rate * 100:.2f}%)")
+    print(f"  Main-free rate: {main_free_rate:.4f} ({main_free_rate * 100:.2f}%)")
     for metric, value in sorted(pass_at_k.items()):
         if metric not in ("compile_rate", "main_free_rate"):
-            print(f"  {metric}: {value:.4f} ({value*100:.2f}%)")
+            print(f"  {metric}: {value:.4f} ({value * 100:.2f}%)")
 
     # Finally, save the results in one file:
     # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
@@ -232,26 +196,30 @@ def evaluate_functional_correctness(
                 if i < len(task_results):
                     result = task_results[i][1]
                     # Merge enhanced schema into sample
-                    sample.update({
-                        "compile_ok": result.get("compile_ok"),
-                        "test_ok": result.get("test_ok"),
-                        "error_type": result.get("error_type"),
-                        "stderr": result.get("stderr", ""),
-                        "main_free": result.get("main_free"),
-                        "result": result.get("result", ""),
-                        "passed": result.get("passed", False),
-                    })
+                    sample.update(
+                        {
+                            "compile_ok": result.get("compile_ok"),
+                            "test_ok": result.get("test_ok"),
+                            "error_type": result.get("error_type"),
+                            "stderr": result.get("stderr", ""),
+                            "main_free": result.get("main_free"),
+                            "result": result.get("result", ""),
+                            "passed": result.get("passed", False),
+                        }
+                    )
                 else:
                     # Missing result - create placeholder (never drop silently)
-                    sample.update({
-                        "compile_ok": None,
-                        "test_ok": None,
-                        "error_type": "runtime_error",
-                        "stderr": "missing result",
-                        "main_free": check_main_free(sample.get("completion", "")),
-                        "result": "filtered: missing result",
-                        "passed": False,
-                    })
+                    sample.update(
+                        {
+                            "compile_ok": None,
+                            "test_ok": None,
+                            "error_type": "runtime_error",
+                            "stderr": "missing result",
+                            "main_free": check_main_free(sample.get("completion", "")),
+                            "result": "filtered: missing result",
+                            "passed": False,
+                        }
+                    )
             yield sample
 
     out_file = sample_file + "_results.jsonl"

@@ -2,24 +2,17 @@
 Sandbox wrapper for Rust code evaluation in HumanEval.
 
 This module provides secure isolation for running rustc commands on LLM-generated code.
-Uses Docker containers for isolation, with Firejail fallback for local development.
-Adapted from SigilDERG-Finetuner's eval_sandbox.py for rustc-based execution.
+Uses Firejail for isolation with explicit user choice for installation or fallback modes.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.4.4
+Version: 2.0.0
 """
 
-import fcntl  # For file locking (Unix)
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
-from typing import Optional
-
-# Cache for rustc validation (avoid checking on every call)
-_docker_rustc_validated = False
-_host_rustc_validated = False
+from typing import NamedTuple
 
 
 class SandboxError(Exception):
@@ -28,396 +21,331 @@ class SandboxError(Exception):
     pass
 
 
-def check_docker_available() -> bool:
-    """Check if Docker is available and running."""
-    try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+class FirejailStatus(NamedTuple):
+    """Result of Firejail availability check."""
+
+    available: bool
+    version: str | None
+    error: str | None
 
 
-def check_firejail_available() -> bool:
-    """Check if Firejail is available."""
-    try:
-        result = subprocess.run(
-            ["firejail", "--version"], capture_output=True, timeout=5
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+class InstallResult(NamedTuple):
+    """Result of Firejail installation attempt."""
+
+    success: bool
+    stdout: str
+    stderr: str
+    exit_code: int
 
 
-def build_docker_image() -> bool:
+# Cache for rustc validation (avoid checking on every call)
+_host_rustc_validated = False
+_firejail_validated = False
+
+
+def check_firejail_available() -> FirejailStatus:
     """
-    Build the Docker image for Rust evaluation.
+    Check if Firejail is available and get version info.
 
     Returns:
-        True if image was built successfully, False otherwise
+        FirejailStatus with availability, version, and any error message.
     """
-    # Get the directory containing this file
-    script_dir = Path(__file__).parent.parent
-    dockerfile_path = script_dir / "Dockerfile.eval"
-
-    if not dockerfile_path.exists():
-        # Create Dockerfile if it doesn't exist
-        create_dockerfile(dockerfile_path)
-
     try:
         result = subprocess.run(
-            [
-                "docker",
-                "build",
-                "-t",
-                "human-eval-rust-sandbox",
-                "-f",
-                str(dockerfile_path),
-                str(script_dir),
-            ],
+            ["firejail", "--version"],
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minutes max for build
+            timeout=5,
         )
-        if result.returncode != 0:
-            print(
-                f"Warning: Docker build failed: {result.stderr}",
-                file=__import__("sys").stderr,
+        if result.returncode == 0:
+            # Extract version from output (first line typically contains version)
+            version_line = (
+                result.stdout.strip().split("\n")[0] if result.stdout else None
             )
-            return False
-        return True
+            return FirejailStatus(available=True, version=version_line, error=None)
+        return FirejailStatus(
+            available=False,
+            version=None,
+            error=f"firejail returned exit code {result.returncode}: {result.stderr}",
+        )
     except subprocess.TimeoutExpired:
-        print("Warning: Docker build timed out", file=__import__("sys").stderr)
-        return False
+        return FirejailStatus(
+            available=False, version=None, error="firejail --version timed out"
+        )
+    except FileNotFoundError:
+        return FirejailStatus(
+            available=False, version=None, error="firejail not found in PATH"
+        )
     except Exception as e:
-        print(f"Warning: Docker build error: {e}", file=__import__("sys").stderr)
-        return False
+        return FirejailStatus(available=False, version=None, error=str(e))
 
 
-def create_dockerfile(dockerfile_path: Path):
-    """Create the Dockerfile for the evaluation sandbox.
-    
-    Matches the approach used in SigilDERG-Finetuner for consistency:
-    - Uses rust:1.91.1-slim base image
-    - Adds clippy and rustfmt components
-    - Pre-downloads common Rust dependencies for --network=none support
+def detect_package_manager() -> str | None:
     """
-    dockerfile_content = """# Rust evaluation sandbox for human-eval-Rust
-# This container provides a minimal, isolated environment for compiling Rust code
-# Matches the approach used in SigilDERG-Finetuner for consistency
-
-FROM rust:1.91.1-slim
-
-# Install clippy and rustfmt
-RUN rustup component add clippy rustfmt
-
-# Create a non-root user for additional security
-RUN useradd -m -u 1000 rustuser && \\
-    mkdir -p /eval && \\
-    chown -R rustuser:rustuser /eval && \\
-    mkdir -p /tmp/cargo-target && \\
-    chown -R rustuser:rustuser /tmp/cargo-target
-
-# Pre-download required dependencies for evaluation (so they work with --network=none)
-# This allows the sandboxed container to compile code using these crates without network access
-# Must be done as rustuser so dependencies are cached in the correct user's home directory
-USER rustuser
-RUN mkdir -p /tmp/deps_cache && \\
-    cd /tmp/deps_cache && \\
-    cargo init --name deps_cache && \\
-    sed -i 's/^edition = .*/edition = "2021"/' Cargo.toml && \\
-    echo '    anyhow = "1.0"' >> Cargo.toml && \\
-    echo '    thiserror = "1.0"' >> Cargo.toml && \\
-    echo '    serde = { version = "1.0", features = ["derive"] }' >> Cargo.toml && \\
-    echo '    serde_json = "1.0"' >> Cargo.toml && \\
-    echo '    regex = "1.10"' >> Cargo.toml && \\
-    echo '    chrono = { version = "0.4", features = ["serde"] }' >> Cargo.toml && \\
-    echo '    uuid = { version = "1.6", features = ["v4", "serde"] }' >> Cargo.toml && \\
-    echo '    rand = "0.8"' >> Cargo.toml && \\
-    echo 'fn main() {}' > src/main.rs && \\
-    cargo build --release && \\
-    rm -rf /tmp/deps_cache
-
-# Set working directory
-WORKDIR /eval
-
-# Default command (can be overridden)
-CMD ["/bin/bash"]
-"""
-    with open(dockerfile_path, "w") as f:
-        f.write(dockerfile_content)
-
-
-def run_rustc_in_docker(
-    source_file: str,
-    output_binary: str,
-    command_args: list[str],
-    timeout: float = 30.0,
-    capture_output: bool = True,
-) -> subprocess.CompletedProcess:
-    """
-    Run rustc command inside a Docker container.
-
-    Args:
-        source_file: Path to the Rust source file on host
-        output_binary: Path to the output binary on host
-        command_args: Additional rustc arguments (e.g., ["--test", "--edition=2021"])
-        timeout: Timeout in seconds
-        capture_output: Whether to capture stdout/stderr
+    Detect the available package manager for Firejail installation.
 
     Returns:
-        CompletedProcess with returncode, stdout, stderr
+        Package manager command prefix or None if not detected.
     """
-    # Ensure Docker image exists (with process-safe file locking)
-    # Check if image exists first (fast path)
-    check_result = subprocess.run(
-        ["docker", "images", "-q", "human-eval-rust-sandbox"],
-        capture_output=True,
-        text=True,
-    )
-    if check_result.stdout.strip():
-        # Image exists, proceed
-        pass
+    # Check for common package managers in order of preference
+    package_managers = [
+        ("apt-get", ["sudo", "apt-get", "install", "-y", "firejail"]),
+        ("dnf", ["sudo", "dnf", "install", "-y", "firejail"]),
+        ("yum", ["sudo", "yum", "install", "-y", "firejail"]),
+        ("pacman", ["sudo", "pacman", "-S", "--noconfirm", "firejail"]),
+        ("zypper", ["sudo", "zypper", "install", "-y", "firejail"]),
+        ("apk", ["sudo", "apk", "add", "firejail"]),
+    ]
+
+    for name, _ in package_managers:
+        if shutil.which(name):
+            return name
+    return None
+
+
+def get_install_command() -> list[str] | None:
+    """
+    Get the appropriate Firejail installation command for this system.
+
+    Returns:
+        Installation command as list or None if no package manager found.
+    """
+    pm = detect_package_manager()
+    if pm == "apt-get":
+        return ["sudo", "apt-get", "install", "-y", "firejail"]
+    elif pm == "dnf":
+        return ["sudo", "dnf", "install", "-y", "firejail"]
+    elif pm == "yum":
+        return ["sudo", "yum", "install", "-y", "firejail"]
+    elif pm == "pacman":
+        return ["sudo", "pacman", "-S", "--noconfirm", "firejail"]
+    elif pm == "zypper":
+        return ["sudo", "zypper", "install", "-y", "firejail"]
+    elif pm == "apk":
+        return ["sudo", "apk", "add", "firejail"]
+    return None
+
+
+def attempt_firejail_install() -> InstallResult:
+    """
+    Attempt to install Firejail using the system package manager.
+
+    Returns:
+        InstallResult with success status, stdout, stderr, and exit code.
+    """
+    install_cmd = get_install_command()
+    if install_cmd is None:
+        return InstallResult(
+            success=False,
+            stdout="",
+            stderr="No supported package manager found (apt-get, dnf, yum, pacman, zypper, apk)",
+            exit_code=-1,
+        )
+
+    print(f"Attempting to install Firejail: {' '.join(install_cmd)}", file=sys.stderr)
+    try:
+        result = subprocess.run(
+            install_cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minutes max for installation
+        )
+        return InstallResult(
+            success=result.returncode == 0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            exit_code=result.returncode,
+        )
+    except subprocess.TimeoutExpired:
+        return InstallResult(
+            success=False,
+            stdout="",
+            stderr="Installation timed out after 5 minutes",
+            exit_code=-1,
+        )
+    except Exception as e:
+        return InstallResult(
+            success=False,
+            stdout="",
+            stderr=str(e),
+            exit_code=-1,
+        )
+
+
+def prompt_sandbox_choice(firejail_error: str | None = None) -> str:
+    """
+    Present interactive choice to user when Firejail is unavailable.
+
+    Args:
+        firejail_error: Error message from Firejail check, if any.
+
+    Returns:
+        Chosen mode: "firejail", "none", or raises SystemExit on cancel.
+    """
+    print("\n" + "=" * 70, file=sys.stderr)
+    print("SANDBOX CONFIGURATION REQUIRED", file=sys.stderr)
+    print("=" * 70, file=sys.stderr)
+
+    if firejail_error:
+        print(f"\nFirejail is not available: {firejail_error}", file=sys.stderr)
     else:
-        # Image doesn't exist - need to build it with file lock to prevent multiple processes
-        lock_file_path = (
-            Path(tempfile.gettempdir()) / "human-eval-rust-docker-build.lock"
-        )
-        lock_file = None
+        print("\nFirejail sandbox is not available on this system.", file=sys.stderr)
 
+    print("\nOptions:", file=sys.stderr)
+    print("  [1] Install Firejail (requires sudo, Linux only)", file=sys.stderr)
+    print("  [2] Cancel and exit", file=sys.stderr)
+    print(
+        "  [3] Proceed WITHOUT sandboxing (UNSAFE - for trusted code only)",
+        file=sys.stderr,
+    )
+    print("\n" + "-" * 70, file=sys.stderr)
+
+    while True:
         try:
-            # Open lock file in append mode (create if doesn't exist)
-            lock_file = open(lock_file_path, "a")
+            choice = input("Enter choice [1/2/3]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nOperation cancelled by user.", file=sys.stderr)
+            raise SystemExit(1)
+
+        if choice == "1":
+            # Attempt installation
+            install_result = attempt_firejail_install()
+            if install_result.success:
+                # Verify installation worked
+                status = check_firejail_available()
+                if status.available:
+                    print(
+                        f"\n✓ Firejail installed successfully: {status.version}",
+                        file=sys.stderr,
+                    )
+                    return "firejail"
+                else:
+                    print(
+                        f"\n✗ Firejail installation appeared to succeed but verification failed: {status.error}",
+                        file=sys.stderr,
+                    )
+            else:
+                print("\n" + "-" * 70, file=sys.stderr)
+                print("FIREJAIL INSTALLATION FAILED", file=sys.stderr)
+                print("-" * 70, file=sys.stderr)
+                print(f"Exit code: {install_result.exit_code}", file=sys.stderr)
+                if install_result.stderr:
+                    # Show first 500 chars of stderr
+                    stderr_preview = install_result.stderr[:500]
+                    print(f"Error output:\n{stderr_preview}", file=sys.stderr)
+                print("-" * 70, file=sys.stderr)
+                print("\nInstallation failed. You may need to:", file=sys.stderr)
+                print("  - Run with elevated privileges", file=sys.stderr)
+                print(
+                    "  - Install Firejail manually from your distribution's package manager",
+                    file=sys.stderr,
+                )
+                print("  - Visit: https://firejail.wordpress.com/", file=sys.stderr)
+                print("\nChoose another option:", file=sys.stderr)
+                print("  [2] Cancel and exit", file=sys.stderr)
+                print("  [3] Proceed WITHOUT sandboxing (UNSAFE)", file=sys.stderr)
+
+        elif choice == "2":
+            print("\nOperation cancelled by user.", file=sys.stderr)
+            raise SystemExit(1)
+
+        elif choice == "3":
+            print("\n" + "!" * 70, file=sys.stderr)
+            print("WARNING: PROCEEDING WITHOUT SANDBOX", file=sys.stderr)
+            print("!" * 70, file=sys.stderr)
+            print(
+                "\nYou are about to run untrusted LLM-generated code WITHOUT sandboxing.",
+                file=sys.stderr,
+            )
+            print(
+                "This is DANGEROUS and should only be done with trusted code.",
+                file=sys.stderr,
+            )
+            print("\nAre you sure you want to continue?", file=sys.stderr)
+
             try:
-                # Try to acquire exclusive lock (non-blocking)
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                try:
-                    # We have the lock - double-check image still doesn't exist
-                    check_result = subprocess.run(
-                        ["docker", "images", "-q", "human-eval-rust-sandbox"],
-                        capture_output=True,
-                        text=True,
-                    )
-                    if not check_result.stdout.strip():
-                        # Still doesn't exist, we build it
-                        print(
-                            "Building Docker image for evaluation sandbox...",
-                            file=__import__("sys").stderr,
-                        )
-                        if not build_docker_image():
-                            raise SandboxError(
-                                "Failed to build Docker image. Run with --sandbox-mode=none for local dev."
-                            )
-                finally:
-                    # Release lock
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            except BlockingIOError:
-                # Another process is building - wait for it to finish
-                # Release non-blocking lock attempt and acquire blocking lock
-                lock_file.close()
-                lock_file = open(lock_file_path, "a")
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Blocking wait
-                # Lock acquired means other process finished - verify image exists
-                check_result = subprocess.run(
-                    ["docker", "images", "-q", "human-eval-rust-sandbox"],
-                    capture_output=True,
-                    text=True,
+                confirm = input("Type 'yes' to confirm: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nOperation cancelled by user.", file=sys.stderr)
+                raise SystemExit(1)
+
+            if confirm == "yes":
+                print("\n⚠ Proceeding without sandboxing.", file=sys.stderr)
+                return "none"
+            else:
+                print(
+                    "\nConfirmation not received. Please choose again:", file=sys.stderr
                 )
-                if not check_result.stdout.strip():
-                    raise SandboxError(
-                        "Docker image build failed (another process attempted it). Run with --sandbox-mode=none for local dev."
-                    )
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        except (OSError, IOError):
-            # File locking not available (Windows or other issue) - fall back to simple check
-            # This is a best-effort approach
-            print(
-                "Warning: File locking not available, building Docker image without coordination",
-                file=__import__("sys").stderr,
-            )
-            print(
-                "Building Docker image for evaluation sandbox...",
-                file=__import__("sys").stderr,
-            )
-            if not build_docker_image():
-                raise SandboxError(
-                    "Failed to build Docker image. Run with --sandbox-mode=none for local dev."
-                )
-        finally:
-            if lock_file is not None:
-                lock_file.close()
+                print("  [1] Install Firejail", file=sys.stderr)
+                print("  [2] Cancel and exit", file=sys.stderr)
+                print("  [3] Proceed WITHOUT sandboxing (UNSAFE)", file=sys.stderr)
 
-    # Validate rustc is available in the sandbox (fail fast if broken)
-    # Only check once per process to avoid performance overhead
-    global _docker_rustc_validated
-    if not _docker_rustc_validated:
-        test_cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "human-eval-rust-sandbox",
-            "bash",
-            "-lc",
-            "which rustc && rustc --version",
-        ]
-        test_result = subprocess.run(
-            test_cmd, capture_output=True, text=True, timeout=10
-        )
-        if test_result.returncode != 0:
-            raise SandboxError(
-                f"Rust toolchain not available in sandbox. "
-                f"This indicates the Docker image is broken.\n"
-                f"stdout: {test_result.stdout}\n"
-                f"stderr: {test_result.stderr}\n"
-                f"Try rebuilding the image or check Docker setup."
-            )
-        _docker_rustc_validated = True
-
-    # Convert host paths to absolute
-    source_file = os.path.abspath(source_file)
-    output_binary = os.path.abspath(output_binary)
-    source_dir = os.path.dirname(source_file)
-    source_name = os.path.basename(source_file)
-    output_name = os.path.basename(output_binary)
-
-    # Base Docker options (security restrictions)
-    # Optimized for H100: 4GB memory limit (was 512m) to handle complex Rust compilation
-    # 2GB tmpfs (was 300m) to prevent "disk full" errors during build
-    base_docker_opts = [
-        "--rm",  # Remove container after execution
-        "--memory=4g",  # Limit memory (increased for complex Rust compilation)
-        "--cpus=1",  # Limit CPU
-        "--read-only",  # Read-only root filesystem
-        "--tmpfs",
-        "/tmp:rw,exec,nosuid,size=2g,mode=1777",  # Temporary writable space (increased for build artifacts)
-        "-v",
-        f"{source_dir}:/eval:ro",  # Mount source directory as read-only
-        "-w",
-        "/eval",  # Working directory
-        "-e",
-        "CARGO_TARGET_DIR=/tmp/cargo-target",  # Set cargo to use tmpfs
-    ]
-
-    # Build rustc command
-    rustc_cmd = (
-        [
-            "rustc",
-        ]
-        + command_args
-        + [
-            source_name,
-            "-o",
-            output_name,
-        ]
-    )
-
-    # Run with --network=none (most secure)
-    docker_cmd = (
-        [
-            "docker",
-            "run",
-        ]
-        + base_docker_opts
-        + [
-            "--network=none",  # No network access
-            "human-eval-rust-sandbox",
-        ]
-        + rustc_cmd
-    )
-
-    try:
-        result = subprocess.run(
-            docker_cmd, capture_output=capture_output, text=True, timeout=timeout
-        )
-
-        # Check for Docker infrastructure errors
-        if result.returncode != 0 and capture_output:
-            error_output = (result.stderr or "") + (result.stdout or "")
-            error_lower = error_output.lower()
-
-            docker_error_patterns = [
-                "docker: error response from daemon",
-                "failed to create task for container",
-                "failed to create shim task",
-                "oci runtime create failed",
-                "error mounting",
-                "read-only file system",
-                "cannot create directory",
-                "permission denied",
-                "no space left on device",
-            ]
-
-            if any(pattern in error_lower for pattern in docker_error_patterns):
-                raise SandboxError(
-                    f"Docker infrastructure error: {error_output[:500]}\n"
-                    f"This indicates a problem with the Docker setup, not the code being evaluated.\n"
-                    f"Check Docker daemon status, disk space, and permissions."
-                )
-
-        return result
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            docker_cmd, returncode=124, stdout="", stderr="Command timed out"
-        )
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.", file=sys.stderr)
 
 
-def run_binary_in_docker(
-    binary_path: str,
-    timeout: float = 30.0,
-    capture_output: bool = True,
-) -> subprocess.CompletedProcess:
+def resolve_sandbox_mode(
+    sandbox_mode: str | None,
+    allow_no_sandbox: bool = False,
+    non_interactive: bool = False,
+) -> str:
     """
-    Run a compiled binary inside a Docker container.
+    Resolve the sandbox mode based on availability and user preferences.
 
     Args:
-        binary_path: Path to the binary on host
-        timeout: Timeout in seconds
-        capture_output: Whether to capture stdout/stderr
+        sandbox_mode: Requested mode ("firejail", "none", or None for auto-detect).
+        allow_no_sandbox: If True and non_interactive, allows unsandboxed mode without prompt.
+        non_interactive: If True, fails fast instead of prompting.
 
     Returns:
-        CompletedProcess with returncode, stdout, stderr
+        Resolved sandbox mode ("firejail" or "none").
+
+    Raises:
+        SandboxError: If Firejail required but unavailable in non-interactive mode.
+        SystemExit: If user cancels interactive prompt.
     """
-    binary_path = os.path.abspath(binary_path)
-    binary_dir = os.path.dirname(binary_path)
-    binary_name = os.path.basename(binary_path)
+    # Explicit firejail mode
+    if sandbox_mode == "firejail":
+        status = check_firejail_available()
+        if not status.available:
+            raise SandboxError(
+                f"Firejail sandbox mode requested but not available: {status.error}\n"
+                "Install Firejail or use --sandbox-mode=none (UNSAFE)."
+            )
+        return "firejail"
 
-    # Base Docker options
-    # Optimized for H100: 4GB memory limit (was 512m) to handle complex Rust compilation
-    # 2GB tmpfs (was 300m) to prevent "disk full" errors during build
-    base_docker_opts = [
-        "--rm",
-        "--memory=4g",  # Limit memory (increased for complex Rust compilation)
-        "--cpus=1",
-        "--read-only",
-        "--tmpfs",
-        "/tmp:rw,exec,nosuid,size=2g,mode=1777",  # Temporary writable space (increased for build artifacts)
-        "-v",
-        f"{binary_dir}:/eval:ro",
-        "-w",
-        "/eval",
-    ]
+    # Explicit none mode
+    if sandbox_mode == "none":
+        if not allow_no_sandbox and not non_interactive:
+            print(
+                "\n⚠ WARNING: Sandboxing disabled via --sandbox-mode=none",
+                file=sys.stderr,
+            )
+            print("This is UNSAFE for untrusted LLM-generated code!", file=sys.stderr)
+        return "none"
 
-    docker_cmd = (
-        [
-            "docker",
-            "run",
-        ]
-        + base_docker_opts
-        + [
-            "--network=none",
-            "human-eval-rust-sandbox",
-            f"./{binary_name}",
-        ]
-    )
+    # Auto-detect mode (sandbox_mode is None or "auto")
+    status = check_firejail_available()
+    if status.available:
+        print(f"Using Firejail sandboxing ({status.version})", file=sys.stderr)
+        return "firejail"
 
-    try:
-        result = subprocess.run(
-            docker_cmd, capture_output=capture_output, text=True, timeout=timeout
-        )
-        return result
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            docker_cmd, returncode=124, stdout="", stderr="Command timed out"
-        )
+    # Firejail not available - handle based on mode
+    if non_interactive:
+        if allow_no_sandbox:
+            print(
+                f"\n⚠ WARNING: Firejail unavailable ({status.error}), proceeding unsandboxed",
+                file=sys.stderr,
+            )
+            return "none"
+        else:
+            raise SandboxError(
+                f"Firejail not available: {status.error}\n"
+                "Install Firejail, or use --allow-no-sandbox to proceed unsafely."
+            )
+
+    # Interactive mode - prompt user
+    return prompt_sandbox_choice(status.error)
 
 
 def run_rustc_with_firejail(
@@ -455,13 +383,14 @@ def run_rustc_with_firejail(
     )
 
     # Firejail command with restrictions
+    # Memory limit: 4GB (same as previous Docker config for H100 optimization)
     firejail_cmd = [
         "firejail",
         "--quiet",
         "--net=none",  # No network
         "--private",  # Private filesystem
         "--private-cwd",  # Private working directory
-        "--rlimit-as=512000000",  # 512MB memory limit
+        "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
         f"--timeout={int(timeout)}",  # Timeout
         "--cwd",
         source_dir,
@@ -501,13 +430,14 @@ def run_binary_with_firejail(
     binary_dir = os.path.dirname(os.path.abspath(binary_path))
     binary_name = os.path.basename(binary_path)
 
+    # Memory limit: 4GB (same as previous Docker config for H100 optimization)
     firejail_cmd = [
         "firejail",
         "--quiet",
         "--net=none",
         "--private",
         "--private-cwd",
-        "--rlimit-as=512000000",
+        "--rlimit-as=4294967296",  # 4GB memory limit (matches Docker config)
         f"--timeout={int(timeout)}",
         "--cwd",
         binary_dir,
@@ -535,10 +465,10 @@ def run_rustc_sandboxed(
     command_args: list[str],
     timeout: float = 30.0,
     capture_output: bool = True,
-    sandbox_mode: Optional[str] = None,
+    sandbox_mode: str | None = None,
 ) -> subprocess.CompletedProcess:
     """
-    Run rustc command with sandboxing (Docker preferred, Firejail fallback).
+    Run rustc command with sandboxing (Firejail or none).
 
     Args:
         source_file: Path to the Rust source file
@@ -546,7 +476,7 @@ def run_rustc_sandboxed(
         command_args: Additional rustc arguments
         timeout: Timeout in seconds
         capture_output: Whether to capture stdout/stderr
-        sandbox_mode: "docker", "firejail", "none", or None (auto-detect)
+        sandbox_mode: "firejail", "none", or None (auto-detect)
 
     Returns:
         CompletedProcess with returncode, stdout, stderr
@@ -554,43 +484,32 @@ def run_rustc_sandboxed(
     Raises:
         SandboxError: If sandboxing is required but unavailable
     """
-    # Auto-detect sandbox mode if not specified
-    auto_mode = sandbox_mode is None
+    # Resolve sandbox mode if not already resolved
     if sandbox_mode is None:
-        if check_docker_available():
-            sandbox_mode = "docker"
-        elif check_firejail_available():
+        status = check_firejail_available()
+        if status.available:
             sandbox_mode = "firejail"
         else:
             sandbox_mode = "none"
-            if auto_mode:
-                print(
-                    "[WARNING] sandbox-mode=auto resolved to 'none' "
-                    "(no Docker or Firejail detected). "
-                    "Untrusted completions will run UNSANDBOXED.",
-                    file=sys.stderr,
-                )
+            print(
+                f"[WARNING] Firejail not available ({status.error}). "
+                "Untrusted completions will run UNSANDBOXED.",
+                file=sys.stderr,
+            )
 
-    if sandbox_mode == "docker":
-        return run_rustc_in_docker(
-            source_file, output_binary, command_args, timeout, capture_output
-        )
-    elif sandbox_mode == "firejail":
+    if sandbox_mode == "firejail":
         return run_rustc_with_firejail(
             source_file, output_binary, command_args, timeout, capture_output
         )
     elif sandbox_mode == "none":
         # No sandboxing - only for local development with trusted code
         # Validate rustc is available on host (fail fast if missing)
-        # Only check once per process to avoid performance overhead
         global _host_rustc_validated
         if not _host_rustc_validated:
-            import shutil
-
             if shutil.which("rustc") is None:
                 raise SandboxError(
                     "rustc not found in PATH. "
-                    "Install Rust toolchain or use sandbox_mode='docker' or 'firejail'."
+                    "Install Rust toolchain or use sandbox_mode='firejail'."
                 )
             _host_rustc_validated = True
 
@@ -606,16 +525,16 @@ def run_binary_sandboxed(
     binary_path: str,
     timeout: float = 30.0,
     capture_output: bool = True,
-    sandbox_mode: Optional[str] = None,
+    sandbox_mode: str | None = None,
 ) -> subprocess.CompletedProcess:
     """
-    Run a compiled binary with sandboxing (Docker preferred, Firejail fallback).
+    Run a compiled binary with sandboxing (Firejail or none).
 
     Args:
         binary_path: Path to the binary
         timeout: Timeout in seconds
         capture_output: Whether to capture stdout/stderr
-        sandbox_mode: "docker", "firejail", "none", or None (auto-detect)
+        sandbox_mode: "firejail", "none", or None (auto-detect)
 
     Returns:
         CompletedProcess with returncode, stdout, stderr
@@ -623,26 +542,20 @@ def run_binary_sandboxed(
     Raises:
         SandboxError: If sandboxing is required but unavailable
     """
-    # Auto-detect sandbox mode if not specified
-    auto_mode = sandbox_mode is None
+    # Resolve sandbox mode if not already resolved
     if sandbox_mode is None:
-        if check_docker_available():
-            sandbox_mode = "docker"
-        elif check_firejail_available():
+        status = check_firejail_available()
+        if status.available:
             sandbox_mode = "firejail"
         else:
             sandbox_mode = "none"
-            if auto_mode:
-                print(
-                    "[WARNING] sandbox-mode=auto resolved to 'none' "
-                    "(no Docker or Firejail detected). "
-                    "Untrusted completions will run UNSANDBOXED.",
-                    file=sys.stderr,
-                )
+            print(
+                f"[WARNING] Firejail not available ({status.error}). "
+                "Untrusted completions will run UNSANDBOXED.",
+                file=sys.stderr,
+            )
 
-    if sandbox_mode == "docker":
-        return run_binary_in_docker(binary_path, timeout, capture_output)
-    elif sandbox_mode == "firejail":
+    if sandbox_mode == "firejail":
         return run_binary_with_firejail(binary_path, timeout, capture_output)
     elif sandbox_mode == "none":
         # No sandboxing - only for local development with trusted code

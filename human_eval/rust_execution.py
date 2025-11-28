@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.4.4
+Version: 2.0.0
 """
 
 import multiprocessing
@@ -297,7 +297,7 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
         if brace_count == 0:
             # Extract just the function body (without the function signature)
             # The prompt already has the signature, we just need the body
-            function_body = completion[start_pos + 1:end_pos - 1].strip()
+            function_body = completion[start_pos + 1 : end_pos - 1].strip()
             return function_body
 
     # Step 2b: If completion is just the function body (no signature), check if it starts with {
@@ -382,50 +382,16 @@ def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str |
     Returns (available, error_message).
     """
     try:
-        if sandbox_mode == "docker" or (sandbox_mode is None and SANDBOX_AVAILABLE):
-            # For Docker, check if we can run rustc in a container
-            if SANDBOX_AVAILABLE:
-                try:
-                    from .sandbox import run_rustc_in_docker
-                    result = run_rustc_in_docker(
-                        "/dev/null",  # dummy source
-                        "/dev/null",  # dummy output
-                        ["--version"],
-                        timeout=5.0,
-                        capture_output=True,
-                    )
-                    if result.returncode == 0:
-                        return True, None
-                    return False, "rustc version check failed in Docker"
-                except Exception as e:
-                    return False, f"Docker rustc check failed: {e}"
-            else:
-                # SANDBOX_AVAILABLE is False
-                if sandbox_mode == "docker":
-                    # Docker mode explicitly requested but sandbox not available
-                    return False, "Docker sandbox mode requested but sandbox module not available"
-                # Auto-detect case: sandbox_mode is None and SANDBOX_AVAILABLE is False
-                # Check local rustc instead
-                result = subprocess.run(
-                    ["rustc", "--version"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5.0,
-                )
-                if result.returncode == 0:
-                    return True, None
-                return False, "rustc --version failed"
-        else:
-            # Check local rustc (for firejail, none, or explicit non-docker modes)
-            result = subprocess.run(
-                ["rustc", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5.0,
-            )
-            if result.returncode == 0:
-                return True, None
-            return False, "rustc --version failed"
+        # Check local rustc (for firejail, none, or any mode - firejail uses host rustc)
+        result = subprocess.run(
+            ["rustc", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+        if result.returncode == 0:
+            return True, None
+        return False, "rustc --version failed"
     except FileNotFoundError:
         return False, "rustc not found in PATH"
     except subprocess.TimeoutExpired:
@@ -437,6 +403,7 @@ def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str |
 def check_main_free(completion: str) -> bool:
     """Check if completion contains fn main."""
     import re
+
     # Check for fn main() patterns
     main_pattern = r"fn\s+main\s*\("
     return not bool(re.search(main_pattern, completion, re.IGNORECASE))
@@ -601,7 +568,9 @@ def _rust_unsafe_execute(
                         result_dict["passed"] = True
                         result_dict["result"] = "passed"
                     else:
-                        failure = test_result.stderr.strip() or test_result.stdout.strip()
+                        failure = (
+                            test_result.stderr.strip() or test_result.stdout.strip()
+                        )
                         result_dict["error_type"] = "assertion_failure"
                         result_dict["stderr"] = failure or "tests failed"
                         result_dict["result"] = f"failed: {result_dict['stderr']}"
@@ -639,7 +608,7 @@ def rust_check_correctness(
         completion: Generated code completion
         timeout: Timeout in seconds
         completion_id: Optional completion ID for tracking
-        sandbox_mode: Optional sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+        sandbox_mode: Optional sandbox mode ("firejail", "none", or None for auto-detect)
         enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
             Set to False for pure HumanEval compatibility without security filtering.
 
@@ -685,7 +654,11 @@ def rust_check_correctness(
         result.append(result_dict)
 
     # Extract result dict (should be first element)
-    result_dict = result[0] if isinstance(result[0], dict) else {"result": result[0], "passed": result[0] == "passed"}
+    result_dict = (
+        result[0]
+        if isinstance(result[0], dict)
+        else {"result": result[0], "passed": result[0] == "passed"}
+    )
 
     # Build return dict with all fields
     return dict(
