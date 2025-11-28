@@ -321,7 +321,7 @@ This evaluator provides comprehensive metrics for Rust code generation:
 **Standard HumanEval Metrics:**
 - **pass@k**: Functional correctness at k samples (pass@1, pass@2, pass@10, pass@100)
 
-**Enhanced Metrics (v1.4.4+):"
+**Enhanced Metrics (v1.4.4+):**
 - **compile_rate**: Fraction of samples that compile successfully
 - **main_free_rate**: Percentage of completions without `fn main()` functions
 

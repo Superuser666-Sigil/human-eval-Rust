@@ -1,3 +1,12 @@
+"""
+Resource monitoring for HumanEval Rust evaluation.
+
+Provides worker slot management and memory usage monitoring during parallel evaluation.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 2.1.0
+"""
+
 import threading
 
 import psutil
@@ -30,14 +39,20 @@ class ResourceMonitor:
             self._active_workers += 1
             return True
 
-    def release_worker(self):
+    def release_worker(self) -> None:
         """Release a worker slot."""
-
         with self._lock:
             self._active_workers = max(0, self._active_workers - 1)
 
-    def stop(self):
+    def stop(self) -> None:
+        """Signal the monitor to stop. Sets the internal stop event."""
         self._stop_event.set()
+
+    @property
+    def active_workers(self) -> int:
+        """Return the current number of active workers."""
+        with self._lock:
+            return self._active_workers
 
 
 __all__ = ["ResourceMonitor"]

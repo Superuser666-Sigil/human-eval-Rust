@@ -11,7 +11,7 @@ jobs:
       - name: Install Firejail
         run: sudo apt-get install -y firejail
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: pip install -e .[dev]
       - name: Run tests

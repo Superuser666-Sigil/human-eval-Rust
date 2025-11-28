@@ -1,3 +1,12 @@
+"""
+Logging configuration for HumanEval Rust evaluation.
+
+Provides structured logging setup for CLI and library usage.
+
+Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 2.1.0
+"""
+
 import logging
 import sys
 
@@ -27,4 +36,8 @@ def setup_logging(
     return logger
 
 
+# Module-level logger for convenience imports
 logger = logging.getLogger("human_eval")
+
+
+__all__ = ["setup_logging", "logger"]

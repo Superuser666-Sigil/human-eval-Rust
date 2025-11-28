@@ -46,11 +46,25 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.11.0",
+    "pytest-benchmark>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "isort>=5.12.0",
     "flake8>=7.0.0",
     "mypy>=1.5.0",
+    # Property-based testing
+    "hypothesis>=6.92.0",
+    # Mutation testing
+    "mutmut>=3.0.0",
+]
+
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.11.0",
+    "hypothesis>=6.92.0",
 ]
 
 [project.scripts]
@@ -80,6 +94,56 @@ line_length = 88
 max-line-length = 88
 ignore = ["E203", "E501", "W503"]
 exclude = ["venv", ".venv", "build", "dist"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "e2e: marks tests as end-to-end tests",
+    "security: marks tests as security-focused tests",
+    "resilience: marks tests as chaos engineering/resilience tests",
+    "property: marks tests as property-based tests",
+    "windows_only: marks tests that only run on Windows",
+    "unix_only: marks tests that only run on Unix-like systems",
+]
+
+[tool.coverage.run]
+source = ["human_eval"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/venv/*",
+    "*/env/*",
+    "*/.venv/*",
+    "*/.env/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    'class .*\\bProtocol\\):',
+    '@(abc\\.)?abstractmethod',
+]
+
+[tool.mutmut]
+paths_to_mutate = "human_eval/"
+tests_dir = "tests/"
+runner = "python -m pytest"
 
 [tool.basedpyright]
 venvPath = "D:\\SigilDERG-Data_Production"
