@@ -1,0 +1,4 @@
+# file: D:\human-eval-Rust\human_eval\evaluation.py
+# hypothesis_version: 6.148.3
+
+[0.0, 1.0, 3.0, 100, '\nMetrics:', '--version', 'Reading samples...', '_results.jsonl', 'avg_compile_time_ms', 'binary_size_bytes', 'clippy_ok', 'clippy_pass_rate', 'compile_ok', 'compile_rate', 'compile_time_ms', 'completion', 'completion_id', 'error_type', 'main_free', 'main_free_rate', 'missing result', 'passed', 'result', 'runtime_error', 'rust', 'rustc', 'rustc_version', 'stderr', 'task_id', 'test_ok', 'unknown']

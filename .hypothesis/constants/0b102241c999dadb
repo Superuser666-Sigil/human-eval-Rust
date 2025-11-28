@@ -1,0 +1,4 @@
+# file: D:\human-eval-Rust\human_eval\sandbox.py
+# hypothesis_version: 6.148.3
+
+[30.0, 124, 300, 500, '\nOptions:', '!', '-', '--caps.drop=all', '--cwd', '--net=none', '--noconfirm', '--nogroups', '--noroot', '--private', '--private-cwd', '--private-tmp', '--quiet', '--read-only=/', '--rlimit-cpu=120', '--rlimit-nproc=50', '--seccomp', '--version', '-S', '-o', '-y', '1', '2', '3', '=', 'Command timed out', 'add', 'apk', 'apt-get', 'dnf', 'firejail', 'install', 'none', 'pacman', 'rustc', 'sudo', 'yes', 'yum', 'zypper']

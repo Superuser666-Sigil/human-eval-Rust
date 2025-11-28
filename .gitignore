@@ -41,8 +41,14 @@ venv
 .DS_Store
 Thumbs.db
 
+# Testing caches
+.hypothesis/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
 # Project specific
 *.jsonl_results.jsonl
 *.jsonl_results.jsonl.gz
-.version-workflow.md
 
