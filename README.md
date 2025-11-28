@@ -64,7 +64,7 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.4.3`
+- `human-eval-rust>=1.4.4`
 - `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
@@ -278,7 +278,7 @@ Sample format:
 {"task_id": "HumanEval/0", "prompt": "fn has_close_elements(...) -> bool{", "canonical_solution": "...", "test": "#[cfg(test)]\nmod tests {...}", "entry_point": "has_close_elements"}
 ```
 
-### Enhanced Prompt Format (v1.4.3+)
+### Enhanced Prompt Format (v1.4.4+)
 
 When using the SigilDERG evaluation pipeline (lambda-package), prompts are automatically enhanced with Rust-specific instructions:
 
@@ -306,11 +306,11 @@ This evaluator provides comprehensive metrics for Rust code generation:
 **Standard HumanEval Metrics:**
 - **pass@k**: Functional correctness at k samples (pass@1, pass@2, pass@10, pass@100)
 
-**Enhanced Metrics (v1.4.3+):**
+**Enhanced Metrics (v1.4.4+):"
 - **compile_rate**: Fraction of samples that compile successfully
 - **main_free_rate**: Percentage of completions without `fn main()` functions
 
-**Result Schema (v1.4.3+):**
+**Result Schema (v1.4.4+):**
 Each evaluation result includes enhanced fields for trust and auditability:
 ```json
 {
