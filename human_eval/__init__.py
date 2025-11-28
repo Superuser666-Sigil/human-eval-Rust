@@ -7,7 +7,7 @@ Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
 Version: 1.3.8
 """
 
-__version__ = "1.3.8"
+__version__ = "1.4.0"
 
 # Export rust_execution module so it can be imported
 # Use relative import to avoid circular dependency issues

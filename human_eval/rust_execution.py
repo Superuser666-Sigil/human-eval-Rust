@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.8
+Version: 1.4.0
 """
 
 import multiprocessing
@@ -376,6 +376,56 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
     return result.strip()
 
 
+def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str | None]:
+    """
+    Preflight check for rustc availability.
+    Returns (available, error_message).
+    """
+    try:
+        if sandbox_mode == "docker" or (sandbox_mode is None and SANDBOX_AVAILABLE):
+            # For Docker, check if we can run rustc in a container
+            if SANDBOX_AVAILABLE:
+                try:
+                    from .sandbox import run_rustc_in_docker
+                    result = run_rustc_in_docker(
+                        "/dev/null",  # dummy source
+                        "/dev/null",  # dummy output
+                        ["--version"],
+                        timeout=5.0,
+                        capture_output=True,
+                    )
+                    if result.returncode == 0:
+                        return True, None
+                    return False, "rustc version check failed in Docker"
+                except Exception as e:
+                    return False, f"Docker rustc check failed: {e}"
+        else:
+            # Check local rustc
+            result = subprocess.run(
+                ["rustc", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            if result.returncode == 0:
+                return True, None
+            return False, "rustc --version failed"
+    except FileNotFoundError:
+        return False, "rustc not found in PATH"
+    except subprocess.TimeoutExpired:
+        return False, "rustc version check timed out"
+    except Exception as e:
+        return False, f"rustc check error: {e}"
+
+
+def check_main_free(completion: str) -> bool:
+    """Check if completion contains fn main."""
+    import re
+    # Check for fn main() patterns
+    main_pattern = r"fn\s+main\s*\("
+    return not bool(re.search(main_pattern, completion, re.IGNORECASE))
+
+
 def _rust_unsafe_execute(
     problem: dict,
     completion: str,
@@ -384,6 +434,19 @@ def _rust_unsafe_execute(
     sandbox_mode: str | None = None,
     enforce_policy: bool = True,
 ):
+    """
+    Execute Rust code and return enhanced result schema.
+    Result dict structure:
+    {
+        "compile_ok": bool | None,
+        "test_ok": bool | None,
+        "error_type": str | None,  # "infra_missing_toolchain" | "compile_error" | "runtime_error" | "assertion_failure"
+        "stderr": str,
+        "passed": bool,
+        "main_free": bool,
+        "result": str,  # Legacy field for compatibility
+    }
+    """
     with create_tempdir() as temp_dir:
         import shutil
 
@@ -395,7 +458,35 @@ def _rust_unsafe_execute(
         reliability_guard()
         subprocess.Popen = popen
 
+        # Initialize result dict with enhanced schema
+        result_dict = {
+            "compile_ok": None,
+            "test_ok": None,
+            "error_type": None,
+            "stderr": "",
+            "passed": False,
+            "main_free": check_main_free(completion),
+            "result": "",
+        }
+
         try:
+            # Preflight check: rustc availability
+            rustc_available, rustc_error = _check_rustc_available(sandbox_mode)
+            if not rustc_available:
+                result_dict["error_type"] = "infra_missing_toolchain"
+                result_dict["stderr"] = rustc_error or "rustc not available"
+                result_dict["result"] = f"failed: {result_dict['stderr']}"
+                result.append(result_dict)
+                return
+
+            # Handle empty completions - never drop silently
+            if not completion or not completion.strip():
+                result_dict["error_type"] = "compile_error"
+                result_dict["stderr"] = "empty completion"
+                result_dict["result"] = "filtered: empty completion"
+                result.append(result_dict)
+                return
+
             # Clean up completion: extract function body and remove extra code
             entry_point = problem.get("entry_point", "")
             cleaned_completion = _extract_function_body(completion, entry_point)
@@ -404,7 +495,10 @@ def _rust_unsafe_execute(
             if enforce_policy:
                 violation = _sanitize_rust_completion(cleaned_completion)
                 if violation:
-                    result.append(f"failed: {violation}")
+                    result_dict["error_type"] = "compile_error"
+                    result_dict["stderr"] = violation
+                    result_dict["result"] = f"failed: {violation}"
+                    result.append(result_dict)
                     return
 
             source_path = os.path.join(temp_dir, "solution.rs")
@@ -420,11 +514,7 @@ def _rust_unsafe_execute(
             compile_args = ["--edition=2021", "--test"]
 
             # Use sandboxing if available and requested
-            # sandbox_mode=None means "auto-detect" (use sandbox if available)
-            # sandbox_mode="none" means explicitly disable sandboxing
-            # The sandbox module handles None as auto-detect
-            effective_mode = sandbox_mode  # None = auto-detect in sandbox.py
-
+            effective_mode = sandbox_mode
             use_sandbox = SANDBOX_AVAILABLE and effective_mode != "none"
 
             try:
@@ -437,10 +527,13 @@ def _rust_unsafe_execute(
                                 compile_args,
                                 timeout=timeout,
                                 capture_output=True,
-                                sandbox_mode=effective_mode,  # may be None -> auto-detect
+                                sandbox_mode=effective_mode,
                             )
                         except SandboxError as e:
-                            result.append(f"failed: sandbox error: {e}")
+                            result_dict["error_type"] = "infra_missing_toolchain"
+                            result_dict["stderr"] = str(e)
+                            result_dict["result"] = f"failed: sandbox error: {e}"
+                            result.append(result_dict)
                             return
                     else:
                         compile_result = subprocess.run(
@@ -450,12 +543,17 @@ def _rust_unsafe_execute(
                             timeout=timeout,
                         )
 
+                    # Track compile status
+                    result_dict["compile_ok"] = compile_result.returncode == 0
                     if compile_result.returncode != 0:
                         failure = (
                             compile_result.stderr.strip()
                             or compile_result.stdout.strip()
                         )
-                        result.append(f"failed: {failure or 'compile error'}")
+                        result_dict["error_type"] = "compile_error"
+                        result_dict["stderr"] = failure or "compile error"
+                        result_dict["result"] = f"failed: {result_dict['stderr']}"
+                        result.append(result_dict)
                         return
 
                     # Run tests (also sandboxed if using sandbox)
@@ -465,10 +563,13 @@ def _rust_unsafe_execute(
                                 test_binary,
                                 timeout=timeout,
                                 capture_output=True,
-                                sandbox_mode=effective_mode,  # may be None -> auto-detect
+                                sandbox_mode=effective_mode,
                             )
                         except SandboxError as e:
-                            result.append(f"failed: sandbox error: {e}")
+                            result_dict["error_type"] = "runtime_error"
+                            result_dict["stderr"] = str(e)
+                            result_dict["result"] = f"failed: sandbox error: {e}"
+                            result.append(result_dict)
                             return
                     else:
                         test_result = subprocess.run(
@@ -477,18 +578,28 @@ def _rust_unsafe_execute(
                             text=True,
                             timeout=timeout,
                         )
-            except (TimeoutException, subprocess.TimeoutExpired):
-                result.append("timed out")
-                return
-            except BaseException as exc:  # noqa: BLE001
-                result.append(f"failed: {exc}")
-                return
 
-            if test_result.returncode == 0:
-                result.append("passed")
-            else:
-                failure = test_result.stderr.strip() or test_result.stdout.strip()
-                result.append(f"failed: {failure or 'tests failed'}")
+                    # Track test status
+                    result_dict["test_ok"] = test_result.returncode == 0
+                    if test_result.returncode == 0:
+                        result_dict["passed"] = True
+                        result_dict["result"] = "passed"
+                    else:
+                        failure = test_result.stderr.strip() or test_result.stdout.strip()
+                        result_dict["error_type"] = "assertion_failure"
+                        result_dict["stderr"] = failure or "tests failed"
+                        result_dict["result"] = f"failed: {result_dict['stderr']}"
+
+            except (TimeoutException, subprocess.TimeoutExpired):
+                result_dict["error_type"] = "runtime_error"
+                result_dict["stderr"] = "timeout"
+                result_dict["result"] = "timed out"
+            except BaseException as exc:  # noqa: BLE001
+                result_dict["error_type"] = "runtime_error"
+                result_dict["stderr"] = str(exc)
+                result_dict["result"] = f"failed: {exc}"
+
+            result.append(result_dict)
         finally:
             shutil.rmtree = rmtree
             os.rmdir = rmdir
@@ -517,7 +628,19 @@ def rust_check_correctness(
             Set to False for pure HumanEval compatibility without security filtering.
 
     Returns:
-        Dictionary with task_id, passed, result, and completion_id
+        Dictionary with enhanced schema:
+        {
+            "task_id": str,
+            "completion": str,
+            "completion_id": int | None,
+            "compile_ok": bool | None,
+            "test_ok": bool | None,
+            "error_type": str | None,
+            "stderr": str,
+            "passed": bool,
+            "main_free": bool,
+            "result": str,  # Legacy field
+        }
     """
 
     manager = multiprocessing.Manager()
@@ -532,12 +655,32 @@ def rust_check_correctness(
     if process.is_alive():
         process.kill()
 
+    # Handle timeout case - never drop silently
     if not result:
-        result.append("timed out")
+        result_dict = {
+            "compile_ok": None,
+            "test_ok": None,
+            "error_type": "runtime_error",
+            "stderr": "process timeout",
+            "passed": False,
+            "main_free": check_main_free(completion),
+            "result": "timed out",
+        }
+        result.append(result_dict)
 
+    # Extract result dict (should be first element)
+    result_dict = result[0] if isinstance(result[0], dict) else {"result": result[0], "passed": result[0] == "passed"}
+
+    # Build return dict with all fields
     return dict(
         task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
+        completion=completion,  # Always include original completion
         completion_id=completion_id,
+        compile_ok=result_dict.get("compile_ok"),
+        test_ok=result_dict.get("test_ok"),
+        error_type=result_dict.get("error_type"),
+        stderr=result_dict.get("stderr", ""),
+        passed=result_dict.get("passed", False),
+        main_free=result_dict.get("main_free", _check_main_free(completion)),
+        result=result_dict.get("result", ""),
     )

@@ -64,7 +64,7 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-- `human-eval-rust>=1.3.8`
+- `human-eval-rust>=1.4.0`
 - `sigil-pipeline>=1.2.1`
 - `sigilderg-finetuner>=2.8.0`
 
@@ -278,6 +278,18 @@ Sample format:
 {"task_id": "HumanEval/0", "prompt": "fn has_close_elements(...) -> bool{", "canonical_solution": "...", "test": "#[cfg(test)]\nmod tests {...}", "entry_point": "has_close_elements"}
 ```
 
+### Enhanced Prompt Format (v1.4.0+)
+
+When using the SigilDERG evaluation pipeline (lambda-package), prompts are automatically enhanced with Rust-specific instructions:
+
+- Includes the Rust function signature and doc comment from the problem
+- Adds explicit instructions: "Implement only the requested function in Rust"
+- Prohibits `fn main`, tests, example code, and unnecessary comments
+- Prohibits `...`, `todo!()`, and `unimplemented!()`
+- Includes Rust-specific reminders about imports and mutability
+
+This ensures models generate focused, correct Rust code without extra scaffolding.
+
 ## Integration with SigilDERG Pipeline
 
 ### Complete Workflow
@@ -289,12 +301,42 @@ Sample format:
 
 ### Metrics and Benchmarking
 
-This evaluator provides standardized `pass@k` metrics that complement the comprehensive evaluation metrics from the SigilDERG Finetuner:
-- **Compilation metrics**: Success rates, clippy warnings
-- **Code quality**: Documentation, idiomatic patterns
-- **Functional correctness**: HumanEval pass@k scores (this project)
+This evaluator provides comprehensive metrics for Rust code generation:
 
-Together, these metrics provide a complete picture of model performance for Rust code generation.
+**Standard HumanEval Metrics:**
+- **pass@k**: Functional correctness at k samples (pass@1, pass@2, pass@10, pass@100)
+
+**Enhanced Metrics (v1.4.0+):**
+- **compile_rate**: Fraction of samples that compile successfully
+- **main_free_rate**: Percentage of completions without `fn main()` functions
+
+**Result Schema (v1.4.0+):**
+Each evaluation result includes enhanced fields for trust and auditability:
+```json
+{
+  "task_id": "HumanEval/0",
+  "completion": "...",
+  "compile_ok": true,
+  "test_ok": true,
+  "error_type": null,
+  "stderr": "",
+  "main_free": true,
+  "passed": true,
+  "result": "passed"
+}
+```
+
+**Error Types:**
+- `infra_missing_toolchain`: Infrastructure failure (rustc not available)
+- `compile_error`: Code failed to compile
+- `runtime_error`: Code compiled but crashed during execution
+- `assertion_failure`: Tests failed (code ran but assertions failed)
+
+**Preflight Checks:**
+- Validates `rustc` availability before evaluation (fails fast on infrastructure issues)
+- Never drops completions silently - all samples are included in results with appropriate status
+
+Together, these metrics provide a complete picture of model performance for Rust code generation, with full auditability for Rule Zero compliance.
 
 ## Hardware Optimizations (H100 Configuration)
 

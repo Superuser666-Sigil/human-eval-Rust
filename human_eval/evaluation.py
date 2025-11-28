@@ -4,7 +4,7 @@ Functional correctness evaluation for HumanEval Rust completions.
 Implements pass@k estimation and parallel test execution.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 1.3.8
+Version: 1.4.0
 """
 
 import itertools
@@ -22,6 +22,7 @@ from human_eval.data import (
     write_jsonl,
 )
 from human_eval.execution import check_correctness
+from human_eval.rust_execution import check_main_free
 
 
 def estimate_pass_at_k(
@@ -168,9 +169,19 @@ def evaluate_functional_correctness(
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
         print("Running test suites...")
+        all_results_list = []
         for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
+            all_results_list.append(result)
+
+    # Track compile rate and main-free rate
+    compile_ok_count = sum(1 for r in all_results_list if r.get("compile_ok") is True)
+    compile_total = sum(1 for r in all_results_list if r.get("compile_ok") is not None)
+    compile_rate = compile_ok_count / compile_total if compile_total > 0 else 0.0
+
+    main_free_count = sum(1 for r in all_results_list if r.get("main_free") is True)
+    main_free_rate = main_free_count / len(all_results_list) if all_results_list else 0.0
 
     # Calculate pass@k.
     total, correct = [], []
@@ -189,38 +200,59 @@ def evaluate_functional_correctness(
         if (total >= k).all()
     }
 
-    # Finally, save the results in one file:
-    # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
-    def combine_results():
-        for sample in stream_jsonl(sample_file):
-            task_id = sample["task_id"]
-            result = results[task_id].pop(0)
-            sample["result"] = result[1]["result"]
-            sample["passed"] = result[1]["passed"]
-            yield sample
+    # Add compile rate and main-free rate to metrics
+    pass_at_k["compile_rate"] = compile_rate
+    pass_at_k["main_free_rate"] = main_free_rate
 
-    out_file = sample_file + "_results.jsonl"
-    print(f"Writing results to {out_file}...")
-    write_jsonl(out_file, tqdm.tqdm(combine_results(), total=n_samples))
-
-    return pass_at_k
-
-    ks = k
-    pass_at_k = {
-        f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
-        for k in ks
-        if (total >= k).all()
-    }
+    # Print metrics
+    print(f"\nMetrics:")
+    print(f"  Compile rate: {compile_rate:.4f} ({compile_rate*100:.2f}%)")
+    print(f"  Main-free rate: {main_free_rate:.4f} ({main_free_rate*100:.2f}%)")
+    for metric, value in sorted(pass_at_k.items()):
+        if metric not in ("compile_rate", "main_free_rate"):
+            print(f"  {metric}: {value:.4f} ({value*100:.2f}%)")
 
     # Finally, save the results in one file:
     # Writes to "<sample_file>_results.jsonl" (one JSON object per sample result)
+    # Ensure all completions are included (never drop silently)
     def combine_results():
+        # Read all samples to ensure we don't miss any
+        samples_by_task = defaultdict(list)
         for sample in stream_jsonl(sample_file):
-            task_id = sample["task_id"]
-            result = results[task_id].pop(0)
-            sample["result"] = result[1]["result"]
-            sample["passed"] = result[1]["passed"]
-            yield sample
+            samples_by_task[sample["task_id"]].append(sample)
+
+        # Match results with samples
+        for task_id in sorted(samples_by_task.keys()):
+            task_samples = samples_by_task[task_id]
+            task_results = results.get(task_id, [])
+            task_results.sort()
+
+            # Ensure we have a result for every sample
+            for i, sample in enumerate(task_samples):
+                if i < len(task_results):
+                    result = task_results[i][1]
+                    # Merge enhanced schema into sample
+                    sample.update({
+                        "compile_ok": result.get("compile_ok"),
+                        "test_ok": result.get("test_ok"),
+                        "error_type": result.get("error_type"),
+                        "stderr": result.get("stderr", ""),
+                        "main_free": result.get("main_free"),
+                        "result": result.get("result", ""),
+                        "passed": result.get("passed", False),
+                    })
+                else:
+                    # Missing result - create placeholder (never drop silently)
+                    sample.update({
+                        "compile_ok": None,
+                        "test_ok": None,
+                        "error_type": "runtime_error",
+                        "stderr": "missing result",
+                        "main_free": check_main_free(sample.get("completion", "")),
+                        "result": "filtered: missing result",
+                        "passed": False,
+                    })
+                yield sample
 
     out_file = sample_file + "_results.jsonl"
     print(f"Writing results to {out_file}...")
