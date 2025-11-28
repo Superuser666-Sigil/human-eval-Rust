@@ -15,6 +15,7 @@ HumanEval Rust executes untrusted, LLM-generated Rust code. The original impleme
 5. **Resource consumption**: Container images were large (1GB+) and consumed significant disk space
 
 The evaluation harness needed a sandboxing solution that was:
+
 - Lightweight and fast
 - Easy to install across Linux distributions
 - Secure enough for untrusted code execution
@@ -29,13 +30,15 @@ Adopt **Firejail-first architecture** for sandboxing with explicit fallback mode
 3. **Interactive flow**: When Firejail unavailable, prompt user to install or accept risk
 
 Key implementation:
+
 - Firejail security options defined in `FIREJAIL_SECURITY_OPTS`
 - Auto-detection of Firejail availability via `check_firejail_available()`
 - Interactive installation prompt via `prompt_sandbox_choice()`
 - Non-interactive mode for CI/CD via `--allow-no-sandbox` flag
 
 Firejail options include:
-```
+
+```text
 --seccomp              # Restrict syscalls
 --caps.drop=all        # Drop all capabilities  
 --noroot               # No root in sandbox
@@ -95,6 +98,7 @@ the sandbox can locate the toolchain correctly.
 Continue using Docker with performance optimizations.
 
 **Rejected because:**
+
 - Fundamental overhead is unavoidable (container creation)
 - Docker daemon requirement is a significant barrier
 - Performance improvements were marginal (still 2-3s overhead)
@@ -104,6 +108,7 @@ Continue using Docker with performance optimizations.
 Use bubblewrap for unprivileged sandboxing.
 
 **Rejected because:**
+
 - Less mature than Firejail
 - Fewer pre-built security profiles
 - Limited distribution availability
@@ -114,6 +119,7 @@ Use bubblewrap for unprivileged sandboxing.
 Use lightweight VM-based isolation.
 
 **Rejected because:**
+
 - Overkill for evaluation use case
 - Complex setup requirements
 - Significant performance overhead

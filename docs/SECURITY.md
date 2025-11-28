@@ -126,7 +126,7 @@ HumanEval Rust executes **untrusted, LLM-generated Rust code**. The security mod
 
 The following Firejail options are applied to all sandboxed executions:
 
-```
+```text
 --seccomp              # Restrict syscalls
 --caps.drop=all        # Drop all capabilities
 --noroot               # No root in sandbox
@@ -155,31 +155,39 @@ This approach maintains strong isolation while allowing the Rust compiler and re
 
 The following patterns are blocked in completions:
 
-**Filesystem Operations**
+#### Filesystem Operations
+
 - `std::fs`, `std::path`, file I/O operations
 
-**Process Operations**
+#### Process Operations
+
 - `std::process`, `Command`, process spawning
 
-**Network Operations**
+#### Network Operations
+
 - `std::net`, `tokio::net`, `reqwest`, `hyper`
 
-**Threading/Concurrency**
+#### Threading/Concurrency
+
 - `std::thread`, `std::sync`, `tokio::spawn`
 
-**Unsafe Code**
+#### Unsafe Code
+
 - `unsafe`, `std::ptr`, `std::mem::transmute`
 
-**FFI/External Code**
+#### FFI/External Code
+
 - `extern`, `libc`, `winapi`, `#[link]`, `#[no_mangle]`
 
-**Compile-time Execution**
+#### Compile-time Execution
+
 - `include!`, `include_str!`, `include_bytes!`
 - `env!`, `option_env!`
 - `asm!`, `global_asm!`
 - `proc_macro`, `#[derive(`
 
-**Intrinsics**
+#### Intrinsics
+
 - `std::intrinsics`, `core::intrinsics`
 
 ### Known Limitations
