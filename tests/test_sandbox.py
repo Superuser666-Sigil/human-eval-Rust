@@ -89,7 +89,7 @@ class TestFirejailDetection:
             assert status.available is False
             assert status.version is None
             assert status.error is not None
-            assert "timeout" in status.error.lower()
+            assert "timed out" in status.error.lower()
 
     def test_detection_when_nonzero_exit(self) -> None:
         """Test detection when Firejail returns non-zero exit code."""

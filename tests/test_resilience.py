@@ -74,7 +74,7 @@ class TestToolchainResilience:
             mock_run.side_effect = subprocess.TimeoutExpired("rustc", 5)
             available, error = rust_execution._check_rustc_available()
             assert available is False
-            assert "timeout" in error.lower()
+            assert "timed out" in error.lower()
 
     def test_handles_rustc_failure(self) -> None:
         """Test handling when rustc returns non-zero exit code."""
@@ -141,7 +141,7 @@ class TestSandboxResilience:
             mock_run.side_effect = subprocess.TimeoutExpired("firejail", 5)
             status = check_firejail_available()
             assert status.available is False
-            assert "timeout" in status.error.lower()
+            assert "timed out" in status.error.lower()
 
 
 class TestCompletionResilience:

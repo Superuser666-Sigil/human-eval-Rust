@@ -509,9 +509,11 @@ class ReliabilityContext:
         self._original_shutil: dict[str, object] = {}
         self._original_subprocess: dict[str, object] = {}
         self._original_builtins: dict[str, object] = {}
+        self._original_sys_modules: dict[str, object] = {}
 
     def __enter__(self):
         import builtins
+        import sys
 
         # Store ALL os module functions that reliability_guard() sets to None
         self._original_os = {
@@ -561,11 +563,18 @@ class ReliabilityContext:
             "quit": getattr(builtins, "quit", None),
         }
 
+        # Store sys.modules entries that reliability_guard sets to None
+        # Use sentinel to distinguish "not present" from "present but None"
+        _NOT_PRESENT = object()
+        for mod_name in ("ipdb", "joblib", "resource", "psutil", "tkinter"):
+            self._original_sys_modules[mod_name] = sys.modules.get(mod_name, _NOT_PRESENT)
+
         reliability_guard(self.maximum_memory_bytes)
         return self
 
     def __exit__(self, *args):
         import builtins
+        import sys
 
         # Restore ALL os module functions
         for name, func in self._original_os.items():
@@ -586,6 +595,16 @@ class ReliabilityContext:
         for name, func in self._original_builtins.items():
             if func is not None:
                 setattr(builtins, name, func)
+
+        # Restore sys.modules entries
+        _NOT_PRESENT = object()
+        for mod_name, original in self._original_sys_modules.items():
+            if original is _NOT_PRESENT:
+                # Module wasn't present before, remove if reliability_guard added None
+                sys.modules.pop(mod_name, None)
+            else:
+                # Restore original value (could be None or actual module)
+                sys.modules[mod_name] = original
 
 
 DETERMINISTIC_RUSTC_FLAGS = [
