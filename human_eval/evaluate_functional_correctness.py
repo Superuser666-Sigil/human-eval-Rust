@@ -4,7 +4,7 @@ Command-line entry point for HumanEval Rust functional correctness evaluation.
 Provides CLI interface using Fire for evaluating Rust code completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.3.0
 """
 
 import sys
