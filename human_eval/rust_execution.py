@@ -503,6 +503,9 @@ class ReliabilityContext:
     (including pytest teardown), causing TypeError: 'NoneType' object is not callable.
     """
 
+    # Sentinel for "module not present in sys.modules"
+    _NOT_PRESENT = object()
+
     def __init__(self, maximum_memory_bytes: int | None = None):
         self.maximum_memory_bytes = maximum_memory_bytes
         self._original_os: dict[str, object] = {}
@@ -564,10 +567,10 @@ class ReliabilityContext:
         }
 
         # Store sys.modules entries that reliability_guard sets to None
-        # Use sentinel to distinguish "not present" from "present but None"
-        _NOT_PRESENT = object()
         for mod_name in ("ipdb", "joblib", "resource", "psutil", "tkinter"):
-            self._original_sys_modules[mod_name] = sys.modules.get(mod_name, _NOT_PRESENT)
+            self._original_sys_modules[mod_name] = sys.modules.get(
+                mod_name, self._NOT_PRESENT
+            )
 
         reliability_guard(self.maximum_memory_bytes)
         return self
@@ -597,9 +600,8 @@ class ReliabilityContext:
                 setattr(builtins, name, func)
 
         # Restore sys.modules entries
-        _NOT_PRESENT = object()
         for mod_name, original in self._original_sys_modules.items():
-            if original is _NOT_PRESENT:
+            if original is self._NOT_PRESENT:
                 # Module wasn't present before, remove if reliability_guard added None
                 sys.modules.pop(mod_name, None)
             else:
