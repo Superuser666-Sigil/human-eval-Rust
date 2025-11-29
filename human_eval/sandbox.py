@@ -5,7 +5,7 @@ This module provides secure isolation for running rustc commands on LLM-generate
 Uses Firejail for isolation with explicit user choice for installation or fallback modes.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.3.0
 """
 
 import os

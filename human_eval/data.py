@@ -4,7 +4,7 @@ Data loading utilities for HumanEval Rust dataset.
 Provides functions to read and write JSONL files containing problems and completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.3.0
 """
 
 import gzip
