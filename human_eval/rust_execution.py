@@ -513,10 +513,23 @@ class ReliabilityContext:
         self._original_subprocess: dict[str, object] = {}
         self._original_builtins: dict[str, object] = {}
         self._original_sys_modules: dict[str, object] = {}
+        self._faulthandler_was_enabled: bool = False
+        self._original_help: object = None
 
     def __enter__(self):
         import builtins
+        import faulthandler
         import sys
+
+        # Store faulthandler state - reliability_guard calls faulthandler.disable()
+        self._faulthandler_was_enabled = faulthandler.is_enabled()
+
+        # Store __builtins__["help"] - reliability_guard sets it to None
+        # Note: __builtins__ can be a dict or module depending on context
+        if isinstance(__builtins__, dict):
+            self._original_help = __builtins__.get("help")
+        else:
+            self._original_help = getattr(__builtins__, "help", None)
 
         # Store ALL os module functions that reliability_guard() sets to None
         self._original_os = {
@@ -577,7 +590,19 @@ class ReliabilityContext:
 
     def __exit__(self, *args):
         import builtins
+        import faulthandler
         import sys
+
+        # Restore faulthandler state
+        if self._faulthandler_was_enabled:
+            faulthandler.enable()
+
+        # Restore __builtins__["help"]
+        if self._original_help is not None:
+            if isinstance(__builtins__, dict):
+                __builtins__["help"] = self._original_help
+            else:
+                setattr(__builtins__, "help", self._original_help)
 
         # Restore ALL os module functions
         for name, func in self._original_os.items():
