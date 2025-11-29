@@ -496,28 +496,96 @@ def _run_clippy_check(source_path: str, timeout: float) -> tuple[bool, str]:
 
 
 class ReliabilityContext:
-    """Context manager that provides isolated reliability guards."""
+    """Context manager that provides isolated reliability guards.
+
+    IMPORTANT: This must save and restore ALL functions that reliability_guard()
+    modifies, otherwise the os module will be corrupted for subsequent code
+    (including pytest teardown), causing TypeError: 'NoneType' object is not callable.
+    """
 
     def __init__(self, maximum_memory_bytes: int | None = None):
         self.maximum_memory_bytes = maximum_memory_bytes
-        self._original_functions: dict[str, object] = {}
+        self._original_os: dict[str, object] = {}
+        self._original_shutil: dict[str, object] = {}
+        self._original_subprocess: dict[str, object] = {}
+        self._original_builtins: dict[str, object] = {}
 
     def __enter__(self):
-        # Store originals
-        self._original_functions = {
-            "rmtree": shutil.rmtree,
-            "rmdir": os.rmdir,
-            "chdir": os.chdir,
-            "Popen": subprocess.Popen,
+        import builtins
+
+        # Store ALL os module functions that reliability_guard() sets to None
+        self._original_os = {
+            "kill": getattr(os, "kill", None),
+            "system": getattr(os, "system", None),
+            "putenv": getattr(os, "putenv", None),
+            "remove": getattr(os, "remove", None),
+            "removedirs": getattr(os, "removedirs", None),
+            "rmdir": getattr(os, "rmdir", None),
+            "fchdir": getattr(os, "fchdir", None),
+            "setuid": getattr(os, "setuid", None),
+            "fork": getattr(os, "fork", None),
+            "forkpty": getattr(os, "forkpty", None),
+            "killpg": getattr(os, "killpg", None),
+            "rename": getattr(os, "rename", None),
+            "renames": getattr(os, "renames", None),
+            "truncate": getattr(os, "truncate", None),
+            "replace": getattr(os, "replace", None),
+            "unlink": getattr(os, "unlink", None),
+            "fchmod": getattr(os, "fchmod", None),
+            "fchown": getattr(os, "fchown", None),
+            "chmod": getattr(os, "chmod", None),
+            "chown": getattr(os, "chown", None),
+            "chroot": getattr(os, "chroot", None),
+            "lchflags": getattr(os, "lchflags", None),
+            "lchmod": getattr(os, "lchmod", None),
+            "lchown": getattr(os, "lchown", None),
+            "getcwd": getattr(os, "getcwd", None),
+            "chdir": getattr(os, "chdir", None),
         }
+
+        # Store shutil functions
+        self._original_shutil = {
+            "rmtree": getattr(shutil, "rmtree", None),
+            "move": getattr(shutil, "move", None),
+            "chown": getattr(shutil, "chown", None),
+        }
+
+        # Store subprocess functions
+        self._original_subprocess = {
+            "Popen": getattr(subprocess, "Popen", None),
+        }
+
+        # Store builtins
+        self._original_builtins = {
+            "exit": getattr(builtins, "exit", None),
+            "quit": getattr(builtins, "quit", None),
+        }
+
         reliability_guard(self.maximum_memory_bytes)
         return self
 
     def __exit__(self, *args):
-        shutil.rmtree = self._original_functions["rmtree"]
-        os.rmdir = self._original_functions["rmdir"]
-        os.chdir = self._original_functions["chdir"]
-        subprocess.Popen = self._original_functions["Popen"]
+        import builtins
+
+        # Restore ALL os module functions
+        for name, func in self._original_os.items():
+            if func is not None:
+                setattr(os, name, func)
+
+        # Restore shutil functions
+        for name, func in self._original_shutil.items():
+            if func is not None:
+                setattr(shutil, name, func)
+
+        # Restore subprocess functions
+        for name, func in self._original_subprocess.items():
+            if func is not None:
+                setattr(subprocess, name, func)
+
+        # Restore builtins
+        for name, func in self._original_builtins.items():
+            if func is not None:
+                setattr(builtins, name, func)
 
 
 DETERMINISTIC_RUSTC_FLAGS = [
