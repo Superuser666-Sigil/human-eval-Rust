@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.0.0
 """
 
 import multiprocessing
@@ -496,142 +496,28 @@ def _run_clippy_check(source_path: str, timeout: float) -> tuple[bool, str]:
 
 
 class ReliabilityContext:
-    """Context manager that provides isolated reliability guards.
-
-    IMPORTANT: This must save and restore ALL functions that reliability_guard()
-    modifies, otherwise the os module will be corrupted for subsequent code
-    (including pytest teardown), causing TypeError: 'NoneType' object is not callable.
-    """
-
-    # Sentinel for "module not present in sys.modules"
-    _NOT_PRESENT = object()
+    """Context manager that provides isolated reliability guards."""
 
     def __init__(self, maximum_memory_bytes: int | None = None):
         self.maximum_memory_bytes = maximum_memory_bytes
-        self._original_os: dict[str, object] = {}
-        self._original_shutil: dict[str, object] = {}
-        self._original_subprocess: dict[str, object] = {}
-        self._original_builtins: dict[str, object] = {}
-        self._original_sys_modules: dict[str, object] = {}
-        self._faulthandler_was_enabled: bool = False
-        self._original_help: object = None
+        self._original_functions: dict[str, object] = {}
 
     def __enter__(self):
-        import builtins
-        import faulthandler
-        import sys
-
-        # Store faulthandler state - reliability_guard calls faulthandler.disable()
-        self._faulthandler_was_enabled = faulthandler.is_enabled()
-
-        # Store __builtins__["help"] - reliability_guard sets it to None
-        # Note: __builtins__ can be a dict or module depending on context
-        if isinstance(__builtins__, dict):
-            self._original_help = __builtins__.get("help")
-        else:
-            self._original_help = getattr(__builtins__, "help", None)
-
-        # Store ALL os module functions that reliability_guard() sets to None
-        self._original_os = {
-            "kill": getattr(os, "kill", None),
-            "system": getattr(os, "system", None),
-            "putenv": getattr(os, "putenv", None),
-            "remove": getattr(os, "remove", None),
-            "removedirs": getattr(os, "removedirs", None),
-            "rmdir": getattr(os, "rmdir", None),
-            "fchdir": getattr(os, "fchdir", None),
-            "setuid": getattr(os, "setuid", None),
-            "fork": getattr(os, "fork", None),
-            "forkpty": getattr(os, "forkpty", None),
-            "killpg": getattr(os, "killpg", None),
-            "rename": getattr(os, "rename", None),
-            "renames": getattr(os, "renames", None),
-            "truncate": getattr(os, "truncate", None),
-            "replace": getattr(os, "replace", None),
-            "unlink": getattr(os, "unlink", None),
-            "fchmod": getattr(os, "fchmod", None),
-            "fchown": getattr(os, "fchown", None),
-            "chmod": getattr(os, "chmod", None),
-            "chown": getattr(os, "chown", None),
-            "chroot": getattr(os, "chroot", None),
-            "lchflags": getattr(os, "lchflags", None),
-            "lchmod": getattr(os, "lchmod", None),
-            "lchown": getattr(os, "lchown", None),
-            "getcwd": getattr(os, "getcwd", None),
-            "chdir": getattr(os, "chdir", None),
+        # Store originals
+        self._original_functions = {
+            "rmtree": shutil.rmtree,
+            "rmdir": os.rmdir,
+            "chdir": os.chdir,
+            "Popen": subprocess.Popen,
         }
-
-        # Store shutil functions
-        self._original_shutil = {
-            "rmtree": getattr(shutil, "rmtree", None),
-            "move": getattr(shutil, "move", None),
-            "chown": getattr(shutil, "chown", None),
-        }
-
-        # Store subprocess functions
-        self._original_subprocess = {
-            "Popen": getattr(subprocess, "Popen", None),
-        }
-
-        # Store builtins
-        self._original_builtins = {
-            "exit": getattr(builtins, "exit", None),
-            "quit": getattr(builtins, "quit", None),
-        }
-
-        # Store sys.modules entries that reliability_guard sets to None
-        for mod_name in ("ipdb", "joblib", "resource", "psutil", "tkinter"):
-            self._original_sys_modules[mod_name] = sys.modules.get(
-                mod_name, self._NOT_PRESENT
-            )
-
         reliability_guard(self.maximum_memory_bytes)
         return self
 
     def __exit__(self, *args):
-        import builtins
-        import faulthandler
-        import sys
-
-        # Restore faulthandler state
-        if self._faulthandler_was_enabled:
-            faulthandler.enable()
-
-        # Restore __builtins__["help"]
-        if self._original_help is not None:
-            if isinstance(__builtins__, dict):
-                __builtins__["help"] = self._original_help
-            else:
-                setattr(__builtins__, "help", self._original_help)
-
-        # Restore ALL os module functions
-        for name, func in self._original_os.items():
-            if func is not None:
-                setattr(os, name, func)
-
-        # Restore shutil functions
-        for name, func in self._original_shutil.items():
-            if func is not None:
-                setattr(shutil, name, func)
-
-        # Restore subprocess functions
-        for name, func in self._original_subprocess.items():
-            if func is not None:
-                setattr(subprocess, name, func)
-
-        # Restore builtins
-        for name, func in self._original_builtins.items():
-            if func is not None:
-                setattr(builtins, name, func)
-
-        # Restore sys.modules entries
-        for mod_name, original in self._original_sys_modules.items():
-            if original is self._NOT_PRESENT:
-                # Module wasn't present before, remove if reliability_guard added None
-                sys.modules.pop(mod_name, None)
-            else:
-                # Restore original value (could be None or actual module)
-                sys.modules[mod_name] = original
+        shutil.rmtree = self._original_functions["rmtree"]
+        os.rmdir = self._original_functions["rmdir"]
+        os.chdir = self._original_functions["chdir"]
+        subprocess.Popen = self._original_functions["Popen"]
 
 
 DETERMINISTIC_RUSTC_FLAGS = [

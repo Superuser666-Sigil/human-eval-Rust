@@ -4,7 +4,7 @@ Execution utilities for HumanEval Rust evaluation.
 Provides timeout handling, reliability guards, and correctness checking.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.0.0
 """
 
 # pyright: reportAttributeAccessIssue=false, reportArgumentType=false
@@ -15,15 +15,16 @@ import os
 import platform
 import tempfile
 import threading
+from typing import Optional
 
 
 def check_correctness(
     problem: dict,
     completion: str,
     timeout: float,
-    completion_id: int | None = None,
-    language: str | None = None,
-    sandbox_mode: str | None = None,
+    completion_id: Optional[int] = None,
+    language: Optional[str] = None,
+    sandbox_mode: Optional[str] = None,
     enforce_policy: bool = True,
 ) -> dict:
     """
@@ -99,7 +100,7 @@ def chdir(root):
         os.chdir(cwd)
 
 
-def reliability_guard(maximum_memory_bytes: int | None = None):
+def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     """
     This disables various destructive functions and prevents the generated code
     from interfering with the test (e.g. fork bomb, killing other processes,

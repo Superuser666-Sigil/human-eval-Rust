@@ -4,7 +4,7 @@ Data loading utilities for HumanEval Rust dataset.
 Provides functions to read and write JSONL files containing problems and completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.1.0
+Version: 2.0.0
 """
 
 import gzip
@@ -43,12 +43,12 @@ def stream_jsonl(filename: str) -> Iterable[dict]:
     """
     if filename.endswith(".gz"):
         with open(filename, "rb") as gzfp:
-            with gzip.open(gzfp, "rt", encoding="utf-8") as fp:
+            with gzip.open(gzfp, "rt") as fp:
                 for line in fp:
                     if any(not x.isspace() for x in line):
                         yield json.loads(line)
     else:
-        with open(filename, "r", encoding="utf-8") as fp:
+        with open(filename, "r") as fp:
             for line in fp:
                 if any(not x.isspace() for x in line):
                     yield json.loads(line)
