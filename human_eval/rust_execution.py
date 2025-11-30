@@ -263,11 +263,69 @@ DISALLOWED_COMPLETION_PATTERNS = [
     "core::intrinsics",
 ]
 
+# Homoglyph mapping for characters that NFKD doesn't normalize to ASCII
+# These are visually similar to ASCII letters but aren't decomposed by Unicode normalization
+HOMOGLYPH_MAP: dict[str, str] = {
+    # Latin small capitals (Phonetic Extensions block)
+    "\u1d00": "a",  # ᴀ LATIN LETTER SMALL CAPITAL A
+    "\u0299": "b",  # ʙ LATIN LETTER SMALL CAPITAL B
+    "\u1d04": "c",  # ᴄ LATIN LETTER SMALL CAPITAL C
+    "\u1d05": "d",  # ᴅ LATIN LETTER SMALL CAPITAL D
+    "\u1d07": "e",  # ᴇ LATIN LETTER SMALL CAPITAL E
+    "\ua730": "f",  # ꜰ LATIN LETTER SMALL CAPITAL F
+    "\u0262": "g",  # ɢ LATIN LETTER SMALL CAPITAL G
+    "\u029c": "h",  # ʜ LATIN LETTER SMALL CAPITAL H
+    "\u026a": "i",  # ɪ LATIN LETTER SMALL CAPITAL I
+    "\u1d0a": "j",  # ᴊ LATIN LETTER SMALL CAPITAL J
+    "\u1d0b": "k",  # ᴋ LATIN LETTER SMALL CAPITAL K
+    "\u029f": "l",  # ʟ LATIN LETTER SMALL CAPITAL L
+    "\u1d0d": "m",  # ᴍ LATIN LETTER SMALL CAPITAL M
+    "\u0274": "n",  # ɴ LATIN LETTER SMALL CAPITAL N
+    "\u1d0f": "o",  # ᴏ LATIN LETTER SMALL CAPITAL O
+    "\u1d18": "p",  # ᴘ LATIN LETTER SMALL CAPITAL P
+    # No small capital Q in standard Unicode
+    "\u0280": "r",  # ʀ LATIN LETTER SMALL CAPITAL R
+    "\ua731": "s",  # ꜱ LATIN LETTER SMALL CAPITAL S
+    "\u1d1b": "t",  # ᴛ LATIN LETTER SMALL CAPITAL T
+    "\u1d1c": "u",  # ᴜ LATIN LETTER SMALL CAPITAL U
+    "\u1d20": "v",  # ᴠ LATIN LETTER SMALL CAPITAL V
+    "\u1d21": "w",  # ᴡ LATIN LETTER SMALL CAPITAL W
+    # No small capital X in standard Unicode
+    "\u028f": "y",  # ʏ LATIN LETTER SMALL CAPITAL Y
+    "\u1d22": "z",  # ᴢ LATIN LETTER SMALL CAPITAL Z
+    # Other common homoglyphs
+    "\u0430": "a",  # а CYRILLIC SMALL LETTER A
+    "\u0435": "e",  # е CYRILLIC SMALL LETTER IE
+    "\u043e": "o",  # о CYRILLIC SMALL LETTER O
+    "\u0440": "p",  # р CYRILLIC SMALL LETTER ER
+    "\u0441": "c",  # с CYRILLIC SMALL LETTER ES
+    "\u0445": "x",  # х CYRILLIC SMALL LETTER HA
+    "\u0443": "y",  # у CYRILLIC SMALL LETTER U
+    "\u0410": "A",  # А CYRILLIC CAPITAL LETTER A
+    "\u0412": "B",  # В CYRILLIC CAPITAL LETTER VE
+    "\u0415": "E",  # Е CYRILLIC CAPITAL LETTER IE
+    "\u041a": "K",  # К CYRILLIC CAPITAL LETTER KA
+    "\u041c": "M",  # М CYRILLIC CAPITAL LETTER EM
+    "\u041d": "H",  # Н CYRILLIC CAPITAL LETTER EN
+    "\u041e": "O",  # О CYRILLIC CAPITAL LETTER O
+    "\u0420": "P",  # Р CYRILLIC CAPITAL LETTER ER
+    "\u0421": "C",  # С CYRILLIC CAPITAL LETTER ES
+    "\u0422": "T",  # Т CYRILLIC CAPITAL LETTER TE
+    "\u0425": "X",  # Х CYRILLIC CAPITAL LETTER HA
+    "\u0427": "Y",  # Ч looks like Y in some fonts
+}
+
 
 def _normalize_unicode(text: str) -> str:
-    """Normalize Unicode to ASCII to prevent homoglyph attacks."""
-
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    """Normalize Unicode to ASCII to prevent homoglyph attacks.
+    
+    Uses both NFKD normalization and explicit homoglyph mapping for characters
+    that don't decompose to ASCII equivalents.
+    """
+    # First apply explicit homoglyph mapping
+    mapped = "".join(HOMOGLYPH_MAP.get(c, c) for c in text)
+    # Then apply NFKD and strip remaining non-ASCII
+    return unicodedata.normalize("NFKD", mapped).encode("ascii", "ignore").decode("ascii")
 
 
 def _sanitize_rust_completion(completion: str) -> str | None:
@@ -474,12 +532,22 @@ def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str |
 
 
 def check_main_free(completion: str) -> bool:
-    """Check if completion contains fn main."""
+    """Check if completion contains fn main outside of comments and strings."""
     import re
 
-    # Check for fn main() patterns
+    # Strip line comments (// ...)
+    code = re.sub(r"//[^\n]*", "", completion)
+    # Strip block comments (/* ... */)
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.DOTALL)
+    # Strip string literals (both "..." and r"..." raw strings)
+    # This is a simplified approach - handles most common cases
+    code = re.sub(r'r?"(?:[^"\\]|\\.)*"', '""', code)
+    # Strip char literals
+    code = re.sub(r"'(?:[^'\\]|\\.)*'", "''", code)
+
+    # Check for fn main() patterns in the cleaned code
     main_pattern = r"fn\s+main\s*\("
-    return not bool(re.search(main_pattern, completion, re.IGNORECASE))
+    return not bool(re.search(main_pattern, code, re.IGNORECASE))
 
 
 def _run_clippy_check(source_path: str, timeout: float) -> tuple[bool, str]:
@@ -833,7 +901,8 @@ def _rust_unsafe_execute(
             result_dict["stderr"] = str(exc)
             result_dict["result"] = f"failed: {exc}"
 
-            result.append(result_dict)
+        # Always append result (was previously only in BaseException handler - bug!)
+        result.append(result_dict)
 
 
 def rust_check_correctness(

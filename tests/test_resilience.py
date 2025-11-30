@@ -62,7 +62,9 @@ class TestToolchainResilience:
 
     def test_handles_rustc_not_found(self) -> None:
         """Test graceful handling when rustc is not found."""
-        with patch("shutil.which", return_value=None):
+        # Patch subprocess.run to simulate rustc not found (FileNotFoundError)
+        with patch("human_eval.rust_execution.subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError("rustc not found")
             available, error = rust_execution._check_rustc_available()
             assert available is False
             assert error is not None
@@ -150,9 +152,11 @@ class TestCompletionResilience:
     def test_handles_binary_content_in_completion(self) -> None:
         """Test handling of binary content in completion string."""
         binary_content = "fn x() { " + "".join(chr(i) for i in range(128, 256) if chr(i).isprintable()) + " }"
-        # Should not crash
-        error = rust_execution._validate_completion(binary_content)
-        # May or may not be an error, but should not crash
+        # Should not crash - we don't care about the result, just that it doesn't raise
+        try:
+            rust_execution._validate_completion(binary_content)
+        except Exception as e:
+            pytest.fail(f"_validate_completion crashed on binary content: {e}")
 
     def test_handles_extremely_long_line(self) -> None:
         """Test handling of completion with extremely long line."""
@@ -240,14 +244,24 @@ class TestGracefulDegradation:
         # Just whitespace
         assert rust_execution.check_main_free("   \n\t  ") is True
 
-        # Main in comment
+        # Main in line comment
         assert rust_execution.check_main_free("// fn main() {}") is True
+
+        # Main in block comment
+        assert rust_execution.check_main_free("/* fn main() {} */") is True
 
         # Main in string
         assert rust_execution.check_main_free('let s = "fn main() {}";') is True
 
+        # Main in raw string
+        assert rust_execution.check_main_free('let s = r"fn main() {}";') is True
+
         # Actual main
         assert rust_execution.check_main_free("fn main() {}") is False
+
+        # Main with whitespace variations
+        assert rust_execution.check_main_free("fn  main  ()") is False
+        assert rust_execution.check_main_free("fn\nmain()") is False
 
 
 class TestConcurrencyResilience:

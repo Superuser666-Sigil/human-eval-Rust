@@ -80,6 +80,72 @@ To include all successfully generated tasks without ratio filtering:
     --scaffold-workspace bench_workspace
 ```
 
+#### Dependency Detection Options (v2.5.0+)
+
+The workspace scaffolding system automatically detects external crate dependencies in your code and can add them to the workspace `Cargo.toml`.
+
+**Interactive mode (default):**
+```powershell
+# Prompts for approval of detected dependencies
+.\.venv\Scripts\python.exe scripts/process_sigil_dataset.py `
+    --input data/sigil_phase2_dataset.jsonl `
+    --scaffold-workspace bench_workspace
+```
+
+**Auto-approve all detected dependencies:**
+```powershell
+.\.venv\Scripts\python.exe scripts/process_sigil_dataset.py `
+    --input data/sigil_phase2_dataset.jsonl `
+    --scaffold-workspace bench_workspace `
+    --auto-deps
+```
+
+**Skip dependency detection entirely:**
+```powershell
+.\.venv\Scripts\python.exe scripts/process_sigil_dataset.py `
+    --input data/sigil_phase2_dataset.jsonl `
+    --scaffold-workspace bench_workspace `
+    --no-deps
+```
+
+**Detected Crates Registry:**
+The system recognizes 15+ common Rust crates including:
+- `rocket`, `tokio`, `serde`, `serde_json`
+- `figment`, `async-trait`, `futures`
+- `chrono`, `time`, `cookie`, `hyper`, `reqwest`
+
+Unrecognized imports are reported but not added automatically.
+
+#### Automated Hardening (v2.5.0+)
+
+Run the complete hardening pipeline automatically after scaffolding:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/process_sigil_dataset.py `
+    --input data/sigil_phase2_dataset.jsonl `
+    --scaffold-workspace bench_workspace `
+    --auto-deps `
+    --run-hardening
+```
+
+This executes all 4 hardening steps in sequence:
+1. `cargo fmt` - Format code
+2. `cargo check --all --tests` - Type checking
+3. `cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery` - Linting
+4. `cargo test --all` - Run tests
+
+**Partial hardening (skip slow steps):**
+```powershell
+# Skip clippy (faster)
+--run-hardening --skip-clippy
+
+# Skip tests (for syntax validation only)
+--run-hardening --skip-tests
+
+# Skip both (fmt + check only)
+--run-hardening --skip-clippy --skip-tests
+```
+
 ### 3. Verify Output
 
 ```powershell
@@ -98,15 +164,21 @@ for c, n in sorted(cats.items()):
 
 Expected output shows task distribution across categories.
 
-### 4. Optional: Run Hardening Pipeline
+### 4. Run Hardening Pipeline
 
-If you used `--scaffold-workspace`, validate the generated code:
+**Option A: Automated (Recommended)**
+
+Use `--run-hardening` flag during scaffolding (see above) to automatically run all steps.
+
+**Option B: Manual**
+
+If you scaffolded without `--run-hardening`, validate the generated code manually:
 
 ```powershell
 cd bench_workspace
 
-# Format check
-cargo fmt --check
+# Format code
+cargo fmt
 
 # Type checking
 cargo check --all --tests
@@ -116,6 +188,20 @@ cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery
 
 # Run tests
 cargo test --all
+```
+
+**Option C: Programmatic**
+
+Use the `run_hardening()` function directly:
+
+```python
+from human_eval.workspace_scaffold import run_hardening
+
+result = run_hardening("bench_workspace", verbose=True)
+print(result.format_report())
+
+if result.all_passed:
+    print("Ready for production!")
 ```
 
 See [Rust 2024 Benchmark Hardening Pipeline](../../rust_2024_benchmark_hardening_pipeline.md) for full quality validation steps.

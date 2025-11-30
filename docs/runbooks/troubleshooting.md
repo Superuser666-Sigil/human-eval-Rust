@@ -232,6 +232,70 @@ with open('samples.jsonl') as f:
 
 ---
 
+## Workspace Scaffolding Issues (v2.5.0+)
+
+### Issue: Unresolved imports in cargo check
+
+**Symptoms:**
+- `cargo check` fails with "unresolved import" errors
+- Error messages like `error[E0432]: unresolved import 'rocket'`
+
+**Cause:**
+The code uses external crates that weren't added to `Cargo.toml`.
+
+**Solution:**
+```powershell
+# Re-scaffold with auto-dependency detection
+.\.venv\Scripts\python.exe scripts/process_sigil_dataset.py `
+    --input data/sigil.jsonl `
+    --scaffold-workspace bench_workspace `
+    --auto-deps
+
+# Or manually add dependencies to bench_workspace/Cargo.toml
+# [workspace.dependencies]
+# rocket = { version = "0.5", features = ["secrets"] }
+```
+
+---
+
+### Issue: Unknown crate not in registry
+
+**Symptoms:**
+- Dependency analysis reports "unresolved imports"
+- Warning: `[!] Unresolved imports (not in registry): some_obscure_crate`
+
+**Cause:**
+The crate isn't in the known crates registry (15+ common crates supported).
+
+**Solution:**
+1. Manually add the dependency to `bench_workspace/Cargo.toml`:
+   ```toml
+   [workspace.dependencies]
+   some_obscure_crate = "1.0"
+   ```
+2. Or request the crate be added to `KNOWN_CRATES_REGISTRY` in `workspace_scaffold.py`
+
+---
+
+### Issue: Dependency version conflicts
+
+**Symptoms:**
+- `cargo check` fails with version incompatibility errors
+- Multiple crates require different versions of the same dependency
+
+**Solution:**
+```powershell
+# Check Cargo.toml for conflicting versions
+cat bench_workspace/Cargo.toml
+
+# Update to compatible versions in [workspace.dependencies]
+# Run cargo update to resolve
+cd bench_workspace
+cargo update
+```
+
+---
+
 ## CI/CD Environment Issues
 
 ### Issue: pytest INTERNALERROR with os module corruption

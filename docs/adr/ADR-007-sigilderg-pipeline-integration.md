@@ -69,7 +69,73 @@ bench_workspace/
 └── ...
 ```
 
-### 5. Quality Level Tracking
+### 5. Automatic Dependency Detection (v2.5.0)
+
+The workspace scaffolding system includes automatic detection of external crate dependencies:
+
+```python
+from human_eval.workspace_scaffold import analyze_dependencies, prompt_for_dependencies
+
+# Analyze tasks for external crate usage
+analysis = analyze_dependencies(tasks)
+print(analysis.format_report())
+
+# Interactive approval workflow
+decision = prompt_for_dependencies(analysis, auto_approve=False)
+
+# Scaffold with approved dependencies
+scaffold_workspace(tasks, output_dir, dependency_decision=decision)
+```
+
+**Known Crates Registry** includes 15+ common crates:
+- Web frameworks: `rocket`, `hyper`, `reqwest`
+- Async runtimes: `tokio`, `async-trait`, `futures`
+- Serialization: `serde`, `serde_json`
+- Configuration: `figment`
+- And more...
+
+**CLI Flags:**
+- `--auto-deps`: Automatically approve all detected dependencies
+- `--no-deps`: Skip dependency detection entirely
+- `--select-deps`: Interactive selection (default behavior)
+
+### 6. Unified Hardening Runner (v2.5.0)
+
+The `run_hardening()` function provides a single entrypoint for the complete hardening pipeline:
+
+```python
+from human_eval.workspace_scaffold import run_hardening
+
+result = run_hardening(
+    "bench_workspace",
+    apply_fmt=True,      # Apply formatting (vs --check)
+    skip_clippy=False,   # Include clippy step
+    skip_tests=False,    # Include test step
+    verbose=True,        # Print progress
+)
+
+print(result.format_report())
+print(f"All passed: {result.all_passed}")
+print(f"Check passed: {result.check_passed}")
+print(f"Clippy passed: {result.clippy_passed}")
+```
+
+**CLI Integration:**
+```bash
+python scripts/process_sigil_dataset.py \
+    --input data/sigil.jsonl \
+    --scaffold-workspace bench_workspace \
+    --auto-deps \
+    --run-hardening
+```
+
+**Hardening Steps (in order):**
+1. `cargo fmt` — Format code to Rust 2024 style
+2. `cargo check --all --tests` — Type checking and borrow checking
+3. `cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery` — Strict linting
+4. `cargo test --all` — Run all tests
+
+### 7. Quality Level Tracking
 
 Track validation status per task using quality levels from the Rust 2024 Benchmark Hardening Pipeline:
 
@@ -80,7 +146,7 @@ Track validation status per task using quality levels from the Rust 2024 Benchma
 | 2 | Idiomatic & Clean | Level 1 + Clippy pedantic/nursery, no unwrap/expect/panic/unsafe |
 | 3 | Semantically Hardened | Level 2 + all tests pass + property tests where applicable |
 
-### 6. Extended JSONL Schema
+### 8. Extended JSONL Schema
 
 ```json
 {
@@ -113,6 +179,8 @@ Track validation status per task using quality levels from the Rust 2024 Benchma
 - **Provenance tracking**: `source` field enables filtering by data origin
 - **Quality visibility**: `quality_level` shows validation status at a glance
 - **Hardening integration**: `--scaffold-workspace` enables full Rust 2024 pipeline
+- **Dependency detection** (v2.5.0): Automatic detection and workspace-level management of external crate dependencies
+- **Unified hardening runner** (v2.5.0): Single `run_hardening()` entrypoint or `--run-hardening` CLI flag
 - **Ecosystem alignment**: Uses `sigil-pipeline` from PyPI (optional dependency)
 
 ### Negative
@@ -124,7 +192,7 @@ Track validation status per task using quality levels from the Rust 2024 Benchma
 ### Neutral
 
 - `sigil-pipeline` remains in `[ecosystem]` optional dependency group
-- Hardening validation stays a separate manual step per runbook
+- Hardening can be run manually or via `--run-hardening` flag
 - Four-category ratio (45/25/20/10) is a target, not enforced programmatically
 
 ## Alternatives Considered
@@ -198,13 +266,14 @@ python scripts/process_sigil_dataset.py \
 
 ### Unit Tests
 
-61 unit tests pass in `tests/test_sigil_ingest.py` covering:
+62 unit tests pass in `tests/test_sigil_ingest.py` covering:
 - Hash determinism and uniqueness
 - Task ID formatting
 - Anti-pattern detection
 - Code extraction (signatures, entry points, doc comments)
 - Schema compliance
 - Category ratio validation
+- Dependency detection (v2.5.0)
 
 ## Related
 
@@ -212,8 +281,9 @@ python scripts/process_sigil_dataset.py \
 - [ADR-005: Deterministic Compilation](ADR-005-deterministic-compilation.md) — Related determinism goals
 - [sigil-pipeline on PyPI](https://pypi.org/project/sigil-pipeline/) — Data source package
 - `human_eval/sigil_ingest.py` — Implementation
-- `human_eval/workspace_scaffold.py` — Workspace generator
+- `human_eval/workspace_scaffold.py` — Workspace generator (incl. dependency detection)
 - `scripts/process_sigil_dataset.py` — CLI driver
 - `scripts/migrate_task_ids.py` — One-time migration script
 - `docs/runbooks/sigil-pipeline-ingestion.md` — Operational guide
+- `docs/runbooks/troubleshooting.md` — Troubleshooting guide (incl. dependency issues)
 - `tests/test_sigil_ingest.py` — Unit and property-based tests

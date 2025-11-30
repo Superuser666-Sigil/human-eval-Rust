@@ -6,7 +6,7 @@ This script ingests data from sigil-pipeline output and transforms it into
 HumanEval-compatible benchmark tasks.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 2.5.0
 
 Usage:
     python scripts/process_sigil_dataset.py --input data/sigil_phase2_dataset.jsonl
@@ -28,7 +28,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from human_eval.sigil_ingest import SigilIngestor, CATEGORY_RATIOS
-from human_eval.workspace_scaffold import scaffold_workspace
+from human_eval.workspace_scaffold import (
+    scaffold_workspace,
+    analyze_dependencies,
+    prompt_for_dependencies,
+    run_hardening,
+    DependencyDecision,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,6 +101,38 @@ Examples:
         "--codegen-only",
         action="store_true",
         help="Only generate CodeGen tasks (skip Transform, Fix, Explain)",
+    )
+    
+    # Dependency handling options
+    parser.add_argument(
+        "--auto-deps",
+        action="store_true",
+        help="Auto-approve all detected external crate dependencies (non-interactive)",
+    )
+    
+    parser.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="Skip dependency installation (some tasks won't compile)",
+    )
+    
+    # Hardening options
+    parser.add_argument(
+        "--run-hardening",
+        action="store_true",
+        help="Run the full hardening pipeline (fmt, check, clippy, test) after scaffolding",
+    )
+    
+    parser.add_argument(
+        "--skip-clippy",
+        action="store_true",
+        help="Skip clippy step during hardening (use with --run-hardening)",
+    )
+    
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="Skip test step during hardening (use with --run-hardening)",
     )
     
     parser.add_argument(
@@ -265,14 +303,43 @@ def main() -> None:
                 if line.strip():
                     task_dicts.append(json.loads(line))
         
+        # Analyze dependencies
+        print("\nAnalyzing external dependencies...")
+        analysis = analyze_dependencies(task_dicts)
+        
+        # Handle dependency decision
+        dependency_decision = None
+        if analysis.has_external_deps():
+            try:
+                dependency_decision = prompt_for_dependencies(
+                    analysis,
+                    auto_approve=args.auto_deps,
+                    auto_reject=args.no_deps,
+                )
+            except KeyboardInterrupt:
+                print("\n\nAborted by user.")
+                sys.exit(1)
+        
+        # Create workspace
         result = scaffold_workspace(
             tasks=task_dicts,
             output_dir=args.scaffold_workspace,
             overwrite=False,
+            dependency_decision=dependency_decision,
         )
         
-        print(f"  Crates created: {result['crates_created']}")
+        print(f"\n  Crates created: {result['crates_created']}")
         print(f"  Crates skipped: {result['crates_skipped']}")
+        
+        if result.get("dependencies_added"):
+            print(f"  Dependencies added: {len(result['dependencies_added'])}")
+            for dep in result["dependencies_added"][:5]:
+                print(f"    • {dep}")
+            if len(result["dependencies_added"]) > 5:
+                print(f"    ... and {len(result['dependencies_added']) - 5} more")
+        
+        if result.get("dependencies_skipped"):
+            print(f"  Dependencies skipped: {len(result['dependencies_skipped'])}")
         
         if result["errors"]:
             print(f"  Errors: {len(result['errors'])}")
@@ -281,12 +348,35 @@ def main() -> None:
             if len(result["errors"]) > 5:
                 print(f"    ... and {len(result['errors']) - 5} more")
         
-        print("\nWorkspace created. Next steps:")
-        print(f"  cd {args.scaffold_workspace}")
-        print("  cargo fmt")
-        print("  cargo check --all --tests")
-        print("  cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery")
-        print("  cargo test --all")
+        # Run hardening if requested
+        if args.run_hardening:
+            print("\n" + "=" * 60)
+            print("Running hardening pipeline...")
+            print("=" * 60)
+            
+            hardening_result = run_hardening(
+                args.scaffold_workspace,
+                apply_fmt=True,
+                skip_clippy=args.skip_clippy,
+                skip_tests=args.skip_tests,
+                verbose=True,
+            )
+            
+            print("\n" + hardening_result.format_report())
+            
+            if not hardening_result.all_passed:
+                print("\n[!] Some hardening steps failed. Review errors above.")
+                sys.exit(1)
+            else:
+                print("\n[OK] All hardening steps passed!")
+        else:
+            print("\nWorkspace created. Next steps:")
+            print(f"  cd {args.scaffold_workspace}")
+            print("  cargo fmt")
+            print("  cargo check --all --tests")
+            print("  cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery")
+            print("  cargo test --all")
+            print("\nOr run with --run-hardening to execute all steps automatically.")
 
 
 if __name__ == "__main__":
