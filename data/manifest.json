@@ -1,0 +1,38 @@
+{
+  "processing_date": "2025-11-30T01:06:47.993200",
+  "input_file": "data\\HumanEval_rust.jsonl",
+  "output_file": "data\\HumanEval_rust.jsonl",
+  "rustfmt_style_edition": "2024",
+  "description": "Validated Rust benchmark dataset with idiomatic signatures and 2024 style formatting",
+  "stats": {
+    "total_tasks": 180,
+    "formatted": 180,
+    "type_checked": 180,
+    "failed_check": 0,
+    "failed_format": 0,
+    "success_rate": "180%",
+    "original_total": 180,
+    "remaining_broken": 0,
+    "category_breakdown": {
+      "CodeGen": 121,
+      "Transform": 31,
+      "Fix": 22,
+      "Explain": 6
+    }
+  },
+  "validation": {
+    "all_tasks_compile": true,
+    "all_tasks_formatted": true,
+    "validation_method": "cargo check --tests per task in bench_workspace crates",
+    "formatting_standard": "rustfmt with style_edition=2024"
+  },
+  "processing_notes": [
+    "Started with 180 tasks from HumanEval_rust.jsonl",
+    "180 tasks compiled successfully in initial processing",
+    "32 additional tasks fixed via automated cargo check analysis",
+    "Total: 180 validated tasks (100% success rate)",
+    "All canonical solutions use idiomatic Rust patterns (&[T], &str)",
+    "All tests validated with cargo check --tests",
+    "Code formatted with rustfmt style_edition=2024"
+  ]
+}

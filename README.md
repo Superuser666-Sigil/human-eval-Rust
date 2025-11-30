@@ -1,4 +1,4 @@
-# HumanEval Rust v2.3.0: Evaluation Harness for SigilDERG Ecosystem
+# HumanEval Rust: Evaluation Harness for SigilDERG Ecosystem
 
 A specialized evaluation harness for assessing Rust code generation capabilities of language models, designed as a core component of the [SigilDERG ecosystem](https://github.com/Superuser666-Sigil) for Rust-focused AI development.
 
@@ -16,7 +16,6 @@ This evaluation harness is part of an integrated pipeline for training and evalu
 ### Target Model
 
 This evaluator is designed to work with fine-tuned Rust code generation models, particularly:
-
 - **[Llama-3.1-8B-Instruct-Rust-QLora](https://huggingface.co/Superuser666-Sigil/Llama-3.1-8B-Instruct-Rust-QLora)**: A Phase 1 fine-tuned model produced using the SigilDERG Finetuner
 
 ## Installation
@@ -36,7 +35,6 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 Install a Rust toolchain via [`rustup`](https://www.rust-lang.org/tools/install) and ensure a modern compiler with Edition 2021 support (Rust 1.56+; we recommend the latest stable toolchain):
-
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup default stable
@@ -66,10 +64,9 @@ pip install sigil-pipeline[ecosystem]
 ```
 
 This installs:
-
-- `human-eval-rust>=2.3.0`
-- `sigil-pipeline>=2.3.0`
-- `sigilderg-finetuner>=3.0.0`
+- `human-eval-rust>=2.1.0`
+- `sigil-pipeline>=2.2.1`
+- `sigilderg-finetuner>=2.8.0`
 
 ### Install from source
 
@@ -181,7 +178,6 @@ The evaluation workflow integrates seamlessly with the [SigilDERG Finetuner](htt
 3. **Compare metrics**: Track improvements across training phases
 
 Example integration:
-
 ```bash
 # After Phase 1 training, evaluate checkpoint
 python scripts/generate_samples.py \
@@ -196,7 +192,6 @@ evaluate_functional_correctness eval_samples.jsonl \
 ### Quick Sanity Check
 
 The example samples should yield 0.5 pass@1:
-
 ```bash
 $ evaluate_functional_correctness data/example_rust_samples.jsonl --problem_file=data/example_rust_problem.jsonl
 Reading samples...
@@ -246,18 +241,15 @@ The evaluator includes multiple layers of security:
 3. **Firejail sandboxing** (recommended): Full process jail isolation with resource limits
 
 **Policy Enforcement Modes**:
-
 - `--enforce-policy` (default): Enables pattern-based filtering for security. Use this for production evaluation of untrusted LLM-generated code.
 - `--no-enforce-policy`: Disables pattern filtering for pure HumanEval compatibility. Use this when you need exact 1:1 comparability with the original HumanEval benchmark format (research/publication mode).
 
 **Sandbox Modes**:
-
 - `firejail` (recommended): Uses Firejail for Linux process isolation with `--net=none`, private filesystem, memory/CPU limits
 - `none`: No sandboxing (UNSAFE - only for local development with trusted code)
 - Auto-detect (default): Automatically detects Firejail availability; prompts for installation or unsafe mode if unavailable
 
 **Firejail Setup** (Linux only):
-
 ```bash
 # Install Firejail
 sudo apt-get install firejail  # Debian/Ubuntu
@@ -272,7 +264,6 @@ sudo pacman -S firejail        # Arch Linux
 **Interactive Installation Flow**:
 
 When Firejail is not available, the evaluator presents an interactive prompt:
-
 1. **Install Firejail**: Attempts automatic installation via system package manager
 2. **Cancel**: Exit without running evaluation
 3. **Proceed without sandbox**: Only after explicit confirmation (UNSAFE)
@@ -280,7 +271,6 @@ When Firejail is not available, the evaluator presents an interactive prompt:
 **Non-Interactive Mode**:
 
 For CI/CD pipelines or automated scripts, use the `--allow-no-sandbox` flag to bypass interactive prompts:
-
 ```bash
 # In CI, when Firejail is available
 evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail
@@ -292,7 +282,6 @@ evaluate_functional_correctness samples.jsonl --sandbox-mode=none --allow-no-san
 ## Dataset Format
 
 The HumanEval Rust dataset (`data/HumanEval_rust.jsonl`) contains 164 Rust programming problems. Each problem includes:
-
 - `task_id`: Unique identifier (e.g., "HumanEval/0")
 - `prompt`: Function signature and docstring
 - `canonical_solution`: Reference implementation
@@ -300,7 +289,6 @@ The HumanEval Rust dataset (`data/HumanEval_rust.jsonl`) contains 164 Rust progr
 - `entry_point`: Function name
 
 Sample format:
-
 ```json
 {"task_id": "HumanEval/0", "prompt": "fn has_close_elements(...) -> bool{", "canonical_solution": "...", "test": "#[cfg(test)]\nmod tests {...}", "entry_point": "has_close_elements"}
 ```
@@ -331,17 +319,14 @@ This ensures models generate focused, correct Rust code without extra scaffoldin
 This evaluator provides comprehensive metrics for Rust code generation:
 
 **Standard HumanEval Metrics:**
-
 - **pass@k**: Functional correctness at k samples (pass@1, pass@2, pass@10, pass@100)
 
 **Enhanced Metrics (v1.4.4+):**
-
 - **compile_rate**: Fraction of samples that compile successfully
 - **main_free_rate**: Percentage of completions without `fn main()` functions
 
 **Result Schema (v1.4.4+):**
 Each evaluation result includes enhanced fields for trust and auditability:
-
 ```json
 {
   "task_id": "HumanEval/0",
@@ -357,14 +342,12 @@ Each evaluation result includes enhanced fields for trust and auditability:
 ```
 
 **Error Types:**
-
 - `infra_missing_toolchain`: Infrastructure failure (rustc not available)
 - `compile_error`: Code failed to compile
 - `runtime_error`: Code compiled but crashed during execution
 - `assertion_failure`: Tests failed (code ran but assertions failed)
 
 **Preflight Checks:**
-
 - Validates `rustc` availability before evaluation (fails fast on infrastructure issues)
 - Never drops completions silently - all samples are included in results with appropriate status
 
@@ -375,15 +358,12 @@ Together, these metrics provide a complete picture of model performance for Rust
 Version 2.0.0+ includes optimizations specifically tuned for high-performance GPU evaluation environments (e.g., 1x H100 with 26 vCPUs and 225GB RAM):
 
 ### Default Configuration
-
 - **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)
 - **Timeout**: 10.0 seconds (default `--timeout=10.0`) - Increased from 3.0s to handle compilation latency on loaded systems
 - **Firejail Memory Limit**: 4GB per process - Handles complex, macro-heavy Rust code compilation
 
 ### Resource Usage
-
 With 24 workers and 4GB memory per process:
-
 - **Maximum Memory Usage**: ~96GB (24 workers × 4GB) - Well within 225GB safety margin
 - **CPU Utilization**: ~92% (24/26 vCPUs) - Near-saturation for maximum throughput
 
@@ -392,14 +372,12 @@ These defaults are optimized for production evaluation on high-end hardware. For
 ## Version 2.0.0 Breaking Changes
 
 **Docker Support Removed**: Version 2.0.0 removes Docker-based sandboxing in favor of Firejail-first architecture:
-
 - Simpler deployment: No Docker daemon required
 - Faster startup: No container overhead
 - Interactive installation: Prompts to install Firejail if missing
 - Non-interactive mode: `--allow-no-sandbox` for CI/CD pipelines
 
 **Migration from v1.x**:
-
 - If you were using `--sandbox-mode=docker`, switch to `--sandbox-mode=firejail`
 - Install Firejail on your system (see Firejail Setup above)
 - For CI/CD, use `--allow-no-sandbox` if running in a secure environment without Firejail
@@ -407,23 +385,20 @@ These defaults are optimized for production evaluation on high-end hardware. For
 ## Version 1.3.2+ Features
 
 **Completion Extraction & Cleaning:**
-
 - Automatically extracts function bodies from model completions
 - Removes extra `main()` functions and standalone code
-- Strips markdown code blocks (` ```rust `, ` ``` `)
+- Strips markdown code blocks (```rust, ```)
 - Handles completions with or without function signatures
 - Improves evaluation accuracy by ensuring only the target function is tested
 
 **Robust Validation:**
-
 - Validates `rustc` availability before evaluation (fails fast if unavailable)
 - Prevents silent failures across thousands of samples
 
 ## Known Issues
 
 While evaluation uses very little memory, you might see the following error message when the system is running out of RAM. Since this may cause some correct programs to fail, we recommend that you free some memory and try again.
-
-```text
+```
 malloc: can't allocate region
 ```
 
@@ -431,7 +406,7 @@ malloc: can't allocate region
 
 This evaluation harness is based on the HumanEval benchmark format described in the original Codex paper. Please cite:
 
-```bibtex
+```
 @article{chen2021codex,
   title={Evaluating Large Language Models Trained on Code},
   author={Mark Chen and Jerry Tworek and Heewoo Jun and Qiming Yuan and Henrique Ponde de Oliveira Pinto and Jared Kaplan and Harri Edwards and Yuri Burda and Nicholas Joseph and Greg Brockman and Alex Ray and Raul Puri and Gretchen Krueger and Michael Petrov and Heidy Khlaaf and Girish Sastry and Pamela Mishkin and Brooke Chan and Scott Gray and Nick Ryder and Mikhail Pavlov and Alethea Power and Lukasz Kaiser and Mohammad Bavarian and Clemens Winter and Philippe Tillet and Felipe Petroski Such and Dave Cummings and Matthias Plappert and Fotios Chantzis and Elizabeth Barnes and Ariel Herbert-Voss and William Hebgen Guss and Alex Nichol and Alex Paino and Nikolas Tezak and Jie Tang and Igor Babuschkin and Suchir Balaji and Shantanu Jain and William Saunders and Christopher Hesse and Andrew N. Carr and Jan Leike and Josh Achiam and Vedant Misra and Evan Morikawa and Alec Radford and Matthew Knight and Miles Brundage and Mira Murati and Katie Mayer and Peter Welinder and Bob McGrew and Dario Amodei and Sam McCandlish and Ilya Sutskever and Wojciech Zaremba},
@@ -447,17 +422,13 @@ This evaluation harness is based on the HumanEval benchmark format described in 
 MIT License
 
 ## Security Model
-
 This release hardens Firejail usage with seccomp, capability dropping, CPU/file/process limits, and read-only mounts to reduce risk when running untrusted Rust code.
 
 ## Metrics
-
 The evaluator now reports compile rate, main-free rate, clippy pass rate, average compile time, and binary sizes alongside pass@k.
 
 ## Extended Dataset
-
 An extended Rust dataset stub is available at `data/HumanEval_rust_extended.jsonl` and can be regenerated with `scripts/generate_extended_dataset.py`.
 
 ## Logging
-
 Use `human_eval.logging_config.setup_logging` to configure structured logging for CLI invocations.

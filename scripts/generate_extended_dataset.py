@@ -5,7 +5,7 @@ Generates additional Rust programming problems beyond the core HumanEval set.
 Currently provides stub problems for testing; extend for production use.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.3.0
+Version: 2.4.0
 """
 
 import json

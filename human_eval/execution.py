@@ -4,7 +4,7 @@ Execution utilities for HumanEval Rust evaluation.
 Provides timeout handling, reliability guards, and correctness checking.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.3.0
+Version: 2.4.0
 """
 
 # pyright: reportAttributeAccessIssue=false, reportArgumentType=false

@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.3.0
+Version: 2.4.0
 """
 
 import multiprocessing
@@ -631,7 +631,8 @@ class ReliabilityContext:
                 sys.modules.pop(mod_name, None)
             else:
                 # Restore original value (could be None or actual module)
-                sys.modules[mod_name] = original
+                from types import ModuleType
+                sys.modules[mod_name] = original  # type: ignore[assignment]
 
 
 DETERMINISTIC_RUSTC_FLAGS = [
@@ -666,8 +667,14 @@ def _rust_unsafe_execute(
         "main_free": bool,
         "result": str,  # Legacy field for compatibility
     }
+
+    Note: Unlike Python execution, Rust code runs in a separate subprocess after
+    compilation. ReliabilityContext/reliability_guard is NOT used here because:
+    1. Rust code doesn't have access to Python's os/subprocess modules
+    2. We need those modules to compile and execute the Rust binary
+    3. Sandbox isolation is handled via firejail or other sandbox modes
     """
-    with create_tempdir() as temp_dir, ReliabilityContext():
+    with create_tempdir() as temp_dir:
         result_dict = {
             "compile_ok": None,
             "test_ok": None,
