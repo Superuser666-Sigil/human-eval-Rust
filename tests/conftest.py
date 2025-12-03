@@ -4,13 +4,13 @@ Shared pytest fixtures for HumanEval Rust tests.
 Provides reusable test fixtures for creating mock problems, completions, and test data.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
+Version: 3.0.0
 """
 
 import json
 import os
 import platform
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any

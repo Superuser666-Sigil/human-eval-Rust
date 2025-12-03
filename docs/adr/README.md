@@ -39,11 +39,17 @@ What becomes easier or more difficult as a result of this decision?
 | ADR | Title | Status |
 |-----|-------|--------|
 | [ADR-001](ADR-001-firejail-first-sandboxing.md) | Firejail-First Sandboxing Architecture | Accepted |
-| [ADR-002](ADR-002-pattern-based-security.md) | Pattern-Based Security Filtering | Accepted |
+| [ADR-002](ADR-002-pattern-based-security.md) | Pattern-Based Security Filtering | Superseded by ADR-011 |
 | [ADR-003](ADR-003-thread-safe-timeout.md) | Thread-Safe Timeout Implementation | Accepted |
 | [ADR-004](ADR-004-enhanced-result-schema.md) | Enhanced Result Schema for Auditability | Accepted |
 | [ADR-005](ADR-005-deterministic-compilation.md) | Deterministic Compilation for Reproducibility | Accepted |
 | [ADR-006](ADR-006-unicode-homoglyph-protection.md) | Unicode Homoglyph Attack Prevention | Accepted |
+| [ADR-007](ADR-007-sigilderg-pipeline-integration.md) | SigilDERG Pipeline Integration | Accepted |
+| [ADR-008](ADR-008-separate-timeout-budgets.md) | Separate Timeout Budgets per Phase | Accepted |
+| [ADR-009](ADR-009-clippy-integration-enforcement.md) | Clippy Integration and Enforcement Modes | Accepted |
+| [ADR-010](ADR-010-enhanced-dependency-detection.md) | Enhanced Dependency Detection for Workspace Scaffolding | Accepted |
+| [ADR-011](ADR-011-context-aware-security-filtering.md) | Security Policy v2 - Context-Aware Filtering | Accepted |
+| [ADR-012](ADR-012-windows-path-length-compatibility.md) | Windows Path Length Compatibility | Accepted |
 
 ## Creating a New ADR
 
@@ -62,4 +68,5 @@ What becomes easier or more difficult as a result of this decision?
 | 1.4.x | ADR-002 (Pattern-Based Security), ADR-006 (Unicode Protection) |
 | 2.0.0 | ADR-001 (Firejail-First), ADR-005 (Deterministic Compilation) |
 | 2.1.0 | Security hardening, comprehensive test suite |
+| 2.5.0 | ADR-007 (SigilDERG Integration), ADR-008 (Separate Timeouts), ADR-009 (Clippy Enforcement), ADR-010 (Enhanced Dependencies), ADR-011 (Context-Aware Security), ADR-012 (Windows Path Limits) |
 

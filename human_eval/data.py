@@ -4,7 +4,7 @@ Data loading utilities for HumanEval Rust dataset.
 Provides functions to read and write JSONL files containing problems and completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import gzip
@@ -13,18 +13,19 @@ import json
 import os
 from collections.abc import Iterable
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-HUMAN_EVAL_RUST = os.path.join(ROOT, "..", "data", "HumanEval_rust.jsonl")
-
 
 def get_human_eval_dataset(language: str | None = None) -> str:
-    """Returns path to HumanEval dataset, using importlib.resources."""
+    """Returns path to HumanEval dataset, using importlib.resources.
+    
+    The dataset is loaded from the data subpackage which is properly configured
+    for packaging in wheels and other distribution formats.
+    """
 
     if language and language.lower() != "rust":
         raise ValueError(f"Only Rust is supported. Got language: {language}")
 
     with importlib.resources.as_file(
-        importlib.resources.files("human_eval").joinpath("../data/HumanEval_rust.jsonl")
+        importlib.resources.files("data").joinpath("HumanEval_rust.jsonl")
     ) as path:
         return str(path)
 

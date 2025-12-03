@@ -12,7 +12,7 @@ Features:
 - Unified hardening runner (run_hardening)
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.5.0
+Version: 3.0.0
 
 See ADR-007 and the Rust 2024 Benchmark Hardening Pipeline document.
 """
@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -114,7 +113,8 @@ class DependencyAnalysis:
     def format_summary(self) -> str:
         """Format a human-readable summary."""
         lines = []
-        lines.append(f"Dependency Analysis ({self.affected_tasks}/{self.total_tasks} tasks affected)")
+        affected = f"{self.affected_tasks}/{self.total_tasks}"
+        lines.append(f"Dependency Analysis ({affected} tasks affected)")
         lines.append("=" * 60)
         
         if self.resolved_crates:
@@ -172,6 +172,9 @@ def analyze_dependencies(tasks: list[dict[str, Any]]) -> DependencyAnalysis:
     # Patterns to detect imports - require :: to avoid matching doc comment words
     use_pattern = re.compile(r"use\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:::|;)")
     extern_pattern = re.compile(r"extern\s+crate\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+    # New pattern: fully-qualified crate paths like serde_json::from_str
+    # Matches: word_boundary crate_name :: (but not for std, core, alloc, self, super, crate)
+    qualified_path_pattern = re.compile(r'\b([a-z][a-z0-9_]*)::[a-zA-Z_]')
     
     # Words to ignore (common English words that appear in doc comments)
     ignore_words = {
@@ -204,7 +207,8 @@ def analyze_dependencies(tasks: list[dict[str, Any]]) -> DependencyAnalysis:
                     continue
                 
                 analysis.add_import(module_path)
-                if module_path.lower() in KNOWN_CRATES_REGISTRY or module_path in KNOWN_CRATES_REGISTRY:
+                if (module_path.lower() in KNOWN_CRATES_REGISTRY
+                        or module_path in KNOWN_CRATES_REGISTRY):
                     task_has_external = True
             
             # Find extern crate
@@ -213,6 +217,21 @@ def analyze_dependencies(tasks: list[dict[str, Any]]) -> DependencyAnalysis:
                 if crate_name.lower() in ignore_words:
                     continue
                 if crate_name not in ("std", "core", "alloc"):
+                    analysis.add_import(crate_name)
+                    task_has_external = True
+            
+            # Find fully-qualified crate paths (e.g., serde_json::from_str)
+            for match in qualified_path_pattern.finditer(code):
+                crate_name = match.group(1).lower()
+                
+                # Skip std library and keywords
+                if crate_name in ("std", "core", "alloc", "self", "super", "crate"):
+                    continue
+                if crate_name in ignore_words:
+                    continue
+                
+                # Check if this is a known external crate
+                if crate_name in KNOWN_CRATES_REGISTRY:
                     analysis.add_import(crate_name)
                     task_has_external = True
         
@@ -365,6 +384,7 @@ def sanitize_crate_name(task_id: str) -> str:
     - Must start with a letter
     - Only alphanumeric and underscores allowed
     - Replace '/' with '_'
+    - Limited to 240 chars to avoid Windows MAX_PATH issues
     
     Args:
         task_id: Task ID like "CodeGen/a3f8c2e1b4d9"
@@ -386,12 +406,23 @@ def sanitize_crate_name(task_id: str) -> str:
     # Remove trailing underscores
     name = name.strip("_")
     
+    # Limit length to avoid Windows MAX_PATH (260 chars)
+    # Reserve space for workspace_dir + '/' + crate_name + '/src/lib.rs' (~15 chars)
+    MAX_NAME_LENGTH = 240
+    if len(name) > MAX_NAME_LENGTH:
+        # Keep first part and hash the rest for uniqueness
+        import hashlib
+        hash_suffix = hashlib.sha256(name.encode()).hexdigest()[:8]
+        name = name[:MAX_NAME_LENGTH - 9] + "_" + hash_suffix
+    
     return name or "unnamed_task"
 
 
 def sanitize_dir_name(task_id: str) -> str:
     """
     Convert a task ID to a valid directory name.
+    
+    Limited to 240 chars to avoid Windows MAX_PATH (260) issues.
     
     Args:
         task_id: Task ID like "CodeGen/a3f8c2e1b4d9"
@@ -403,6 +434,14 @@ def sanitize_dir_name(task_id: str) -> str:
     name = task_id.replace("/", "_")
     # Replace any problematic characters
     name = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+    
+    # Limit length to avoid Windows MAX_PATH
+    MAX_DIR_LENGTH = 240
+    if len(name) > MAX_DIR_LENGTH:
+        import hashlib
+        hash_suffix = hashlib.sha256(name.encode()).hexdigest()[:8]
+        name = name[:MAX_DIR_LENGTH - 9] + "_" + hash_suffix
+    
     return name or "unnamed_task"
 
 
@@ -444,11 +483,14 @@ def generate_lib_rs(task: dict[str, Any]) -> str:
     imports = extract_imports(canonical_solution)
     
     # Also check for common imports needed
-    if "HashMap" in canonical_solution and "use std::collections::HashMap" not in "\n".join(imports):
+    imports_str = "\n".join(imports)
+    if "HashMap" in canonical_solution and "use std::collections::HashMap" not in imports_str:
         imports.append("use std::collections::HashMap;")
-    if "HashSet" in canonical_solution and "use std::collections::HashSet" not in "\n".join(imports):
+    imports_joined = "\n".join(imports)
+    if "HashSet" in canonical_solution and "use std::collections::HashSet" not in imports_joined:
         imports.append("use std::collections::HashSet;")
-    if "BTreeMap" in canonical_solution and "use std::collections::BTreeMap" not in "\n".join(imports):
+    imports_joined = "\n".join(imports)
+    if "BTreeMap" in canonical_solution and "use std::collections::BTreeMap" not in imports_joined:
         imports.append("use std::collections::BTreeMap;")
     
     imports_str = "\n".join(imports) if imports else "// No additional imports"
@@ -563,7 +605,8 @@ def prompt_for_dependencies(
             for crate, (version, features, count) in sorted(analysis.resolved_crates.items()):
                 feat_str = f" (features: {features})" if features else ""
                 try:
-                    ans = get_input(f"  Add {crate}={version}{feat_str}? [{count} imports] [Y/n]: ").strip().lower()
+                    prompt_msg = f"  Add {crate}={version}{feat_str}? [{count} imports] [Y/n]: "
+                    ans = get_input(prompt_msg).strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     ans = "n"
                 if ans in ("", "y", "yes"):
@@ -581,20 +624,37 @@ def prompt_for_dependencies(
 
 
 def _get_task_dependencies(task: dict[str, Any], selected_crates: set[str]) -> set[str]:
-    """Determine which workspace dependencies a task needs."""
+    """Determine which workspace dependencies a task needs.
+    
+    Detects both explicit use statements and fully-qualified crate paths.
+    """
     needed = set()
     
     use_pattern = re.compile(r"use\s+([a-zA-Z_][a-zA-Z0-9_]*)")
+    # Pattern for fully-qualified paths like serde_json::from_str
+    qualified_path_pattern = re.compile(r'\b([a-z][a-z0-9_]*)::[a-zA-Z_]')
     
     for code_field in ("prompt", "canonical_solution", "test"):
         code = task.get(code_field, "")
         if not code:
             continue
         
+        # Check use statements
         for match in use_pattern.finditer(code):
             root_module = match.group(1)
             if root_module in KNOWN_CRATES_REGISTRY:
                 crate_name = KNOWN_CRATES_REGISTRY[root_module][0]
+                if crate_name in selected_crates:
+                    needed.add(crate_name)
+        
+        # Check fully-qualified paths
+        for match in qualified_path_pattern.finditer(code):
+            crate_name = match.group(1).lower()
+            # Skip std library
+            if crate_name in ("std", "core", "alloc", "self", "super", "crate"):
+                continue
+            # Check if it's a known crate
+            if crate_name in KNOWN_CRATES_REGISTRY:
                 if crate_name in selected_crates:
                     needed.add(crate_name)
     
@@ -651,7 +711,9 @@ def scaffold_workspace(
     workspace_deps_lines = []
     if selected_crates:
         workspace_deps_lines.append("[workspace.dependencies]")
-        workspace_deps_lines.append('proptest = { version = "1", default-features = false, features = ["std"] }')
+        workspace_deps_lines.append(
+            'proptest = { version = "1", default-features = false, features = ["std"] }'
+        )
         
         # Build reverse lookup: crate_name -> (version, features)
         crate_versions: dict[str, tuple[str, list[str] | None]] = {}

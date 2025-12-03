@@ -4,7 +4,7 @@ Command-line entry point for HumanEval Rust functional correctness evaluation.
 Provides CLI interface using Fire for evaluating Rust code completions.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import sys
@@ -24,6 +24,7 @@ def entry_point(
     language: str | None = None,
     sandbox_mode: str | None = None,
     allow_no_sandbox: bool = False,
+    require_sandbox: bool = False,
     enforce_policy: bool = True,
 ):
     """
@@ -47,6 +48,9 @@ def entry_point(
       allow_no_sandbox: Allow proceeding without sandbox in non-interactive mode.
         Use with --sandbox-mode=none or when Firejail is unavailable.
         Required for automated pipelines that accept unsandboxed execution.
+      require_sandbox: Require sandboxing (fail-fast if Firejail unavailable).
+        Use in production/shared environments for safety. Overrides allow_no_sandbox.
+        If Firejail is missing, raises error instead of falling back to unsandboxed execution.
       enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
         Set to False for pure HumanEval compatibility without security filtering.
         Use --no-enforce-policy to disable policy enforcement.
@@ -57,14 +61,17 @@ def entry_point(
 
     # Resolve sandbox mode with user interaction if needed
     try:
-        from human_eval.sandbox import check_firejail_available, resolve_sandbox_mode
+        from human_eval.sandbox import check_firejail_available, resolve_sandbox_mode, SandboxError
 
         # Determine if we're in interactive mode (stdin is a TTY)
         non_interactive = not sys.stdin.isatty()
+        
+        # If require_sandbox is set, override allow_no_sandbox
+        effective_allow_no_sandbox = allow_no_sandbox and not require_sandbox
 
         resolved_mode = resolve_sandbox_mode(
             sandbox_mode=sandbox_mode,
-            allow_no_sandbox=allow_no_sandbox,
+            allow_no_sandbox=effective_allow_no_sandbox,
             non_interactive=non_interactive,
         )
 
@@ -72,6 +79,11 @@ def entry_point(
             status = check_firejail_available()
             print(f"Using Firejail sandboxing ({status.version})", file=sys.stderr)
         elif resolved_mode == "none":
+            if require_sandbox:
+                raise SandboxError(
+                    "Sandbox required (--require-sandbox) but Firejail is not available. "
+                    "Install Firejail or remove --require-sandbox flag."
+                )
             if not allow_no_sandbox:
                 print(
                     "⚠ WARNING: Running without sandbox. This is UNSAFE for untrusted code!",
@@ -82,6 +94,12 @@ def entry_point(
 
     except ImportError:
         # Sandbox module not available
+        if require_sandbox:
+            print(
+                "ERROR: Sandbox required (--require-sandbox) but sandbox module not available.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         sandbox_mode = "none"
         print(
             "WARNING: Sandbox module not available, running without sandboxing",

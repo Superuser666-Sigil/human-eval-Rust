@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human-eval-rust"
-version = "2.5.0"
+version = "3.0.0"
 description = "Evaluation harness for the HumanEval Rust problem solving dataset"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -77,10 +77,10 @@ evaluate_functional_correctness = "human_eval.evaluate_functional_correctness:ma
 "Evaluation" = "https://github.com/Superuser666-Sigil/human-eval-Rust"
 
 [tool.setuptools]
-packages = ["human_eval"]
+packages = ["human_eval", "data"]
 
 [tool.setuptools.package-data]
-"*" = ["../data/*.jsonl"]
+data = ["*.jsonl", "*.jsonl.gz"]
 
 [tool.black]
 line-length = 88

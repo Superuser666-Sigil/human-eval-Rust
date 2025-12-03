@@ -6,7 +6,7 @@ This module provides functionality to ingest data from sigil-pipeline
 benchmark tasks across four categories: CodeGen, Transform, Fix, and Explain.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 
 See ADR-007 for architectural decisions.
 """
@@ -452,9 +452,18 @@ class SigilIngestor:
         
         # Create a transformation prompt
         transform_prompts = {
-            "modernize": "// Modernize this function to use Rust 2024 idioms.\n// Original:\n",
-            "refactor": "// Refactor this function to improve readability and maintainability.\n// Original:\n",
-            "idiomatic": "// Rewrite this function using idiomatic Rust patterns (iterators, combinators).\n// Original:\n",
+            "modernize": (
+                "// Modernize this function to use Rust 2024 idioms.\n"
+                "// Original:\n"
+            ),
+            "refactor": (
+                "// Refactor this function to improve readability and "
+                "maintainability.\n// Original:\n"
+            ),
+            "idiomatic": (
+                "// Rewrite this function using idiomatic Rust patterns "
+                "(iterators, combinators).\n// Original:\n"
+            ),
             "generalize": "// Generalize this function to work with generic types.\n// Original:\n",
             "adapt": "// Adapt this function to use a different API signature.\n// Original:\n",
         }
@@ -670,7 +679,7 @@ mod tests {{
 /// Conditions under which this function panics (if any)
 '''
         elif explain_type == "complexity":
-            return f'''// Time Complexity: O(n) where n is the input size
+            return '''// Time Complexity: O(n) where n is the input size
 // Space Complexity: O(1) auxiliary space
 //
 // Analysis:

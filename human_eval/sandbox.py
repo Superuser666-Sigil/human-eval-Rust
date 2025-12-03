@@ -5,7 +5,7 @@ This module provides secure isolation for running rustc commands on LLM-generate
 Uses Firejail for isolation with explicit user choice for installation or fallback modes.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import os
@@ -13,6 +13,18 @@ import shutil
 import subprocess
 import sys
 from typing import NamedTuple
+
+__all__ = [
+    "SandboxError",
+    "FirejailStatus",
+    "InstallResult",
+    "run_rustc_sandboxed",
+    "run_binary_sandboxed",
+    "check_firejail_available",
+    "attempt_firejail_install",
+    "prompt_sandbox_choice",
+    "resolve_sandbox_mode",
+]
 
 
 class SandboxError(Exception):
@@ -234,7 +246,8 @@ def prompt_sandbox_choice(firejail_error: str | None = None) -> str:
                     return "firejail"
                 else:
                     print(
-                        f"\n✗ Firejail installation appeared to succeed but verification failed: {status.error}",
+                        "\n✗ Firejail installation appeared to succeed but "
+                        f"verification failed: {status.error}",
                         file=sys.stderr,
                     )
             else:

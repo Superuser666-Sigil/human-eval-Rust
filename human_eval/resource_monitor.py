@@ -4,7 +4,7 @@ Resource monitoring for HumanEval Rust evaluation.
 Provides worker slot management and memory usage monitoring during parallel evaluation.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import threading

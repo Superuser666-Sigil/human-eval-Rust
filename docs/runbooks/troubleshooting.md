@@ -69,15 +69,74 @@ evaluate_functional_correctness samples.jsonl --n_workers=4
 
 **Symptoms:**
 - 100% timeout rate
-- Results show `"result": "timed out"`
+- Results show `"error_type": "compile_timeout"` or `"test_timeout"`
 
 **Solution:**
 ```bash
-# Increase timeout
-evaluate_functional_correctness samples.jsonl --timeout=60.0
+# Increase timeout budgets (separate budgets for compile/run/clippy)
+evaluate_functional_correctness samples.jsonl \
+    --compile-timeout=30.0 \
+    --run-timeout=30.0 \
+    --clippy-timeout=20.0
 
 # Check for infinite loops in completions
 head -1 samples.jsonl | python -c "import json,sys; print(json.load(sys.stdin)['completion'])"
+
+# Check which phase is timing out
+grep -o '"error_type":"[^"]*timeout"' samples.jsonl_results.jsonl | sort | uniq -c
+# If mostly compile_timeout: increase --compile-timeout
+# If mostly test_timeout: increase --run-timeout
+```
+
+**Note:** Since v2.5.0, timeouts are tracked per phase (compile, run, clippy). See [ADR-008](../adr/ADR-008-separate-timeout-budgets.md).
+
+---
+
+### Issue: Clippy lint failures
+
+**Symptoms:**
+- `error_type: "lint_failure"` in results
+- All completions fail with clippy warnings
+- Happens when `--clippy-required` flag is used
+
+**Solution:**
+```bash
+# Disable clippy enforcement (advisory mode - default)
+evaluate_functional_correctness samples.jsonl  # No --clippy-required
+
+# Check what lint issues exist (clippy_ok field shows results)
+grep -o '"clippy_ok":[^,]*' samples.jsonl_results.jsonl | sort | uniq -c
+
+# Increase clippy timeout if infrastructure issue
+evaluate_functional_correctness samples.jsonl \
+    --clippy-required \
+    --clippy-timeout=20.0
+```
+
+**Note:** Since v2.5.0, clippy has two modes:
+- **Advisory (default)**: Lint failures recorded but don't fail completion
+- **Required**: Lint failures block completion with `lint_failure` error type
+
+See [ADR-009](../adr/ADR-009-clippy-integration-enforcement.md) for details.
+
+---
+
+### Issue: "infra_missing_linter" errors
+
+**Symptoms:**
+- `error_type: "infra_missing_linter"` in results
+- Clippy fails due to missing cargo
+
+**Solution:**
+```bash
+# Verify cargo is installed
+cargo --version
+
+# Install if missing
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# If cargo exists but clippy fails, check temp dir access
+# (Cargo.toml is now auto-generated, but may fail on read-only filesystems)
 ```
 
 ---

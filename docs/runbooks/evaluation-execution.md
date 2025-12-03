@@ -60,17 +60,52 @@ Expected output: `{'pass@1': 0.5}`
 ### 4. Run Full Evaluation
 
 ```bash
-# Default settings (24 workers, 10s timeout)
+# Default settings (24 workers, advisory clippy, no sandbox enforcement)
 evaluate_functional_correctness samples.jsonl
 
-# Custom settings
+# Custom timeout budgets (separate for compile/test/clippy)
+evaluate_functional_correctness samples.jsonl \
+    --compile-timeout=15.0 \
+    --run-timeout=10.0 \
+    --clippy-timeout=10.0
+
+# Quality gate mode (enforce clippy, require sandbox)
+evaluate_functional_correctness samples.jsonl \
+    --clippy-required \
+    --require-sandbox
+
+# H100 tuning (faster compilation)
+evaluate_functional_correctness samples.jsonl \
+    --compile-timeout=5.0 \
+    --run-timeout=5.0 \
+    --clippy-timeout=5.0 \
+    --n_workers=32
+
+# Full control
 evaluate_functional_correctness samples.jsonl \
     --k=1,10,100 \
     --n_workers=8 \
-    --timeout=30.0 \
+    --compile-timeout=20.0 \
+    --run-timeout=15.0 \
+    --clippy-timeout=10.0 \
+    --clippy-required \
     --sandbox-mode=firejail \
-    --enforce-policy
+    --require-sandbox
 ```
+
+**Parameter reference:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--compile-timeout` | 10.0 | Seconds for `rustc` compilation |
+| `--run-timeout` | 10.0 | Seconds for test execution |
+| `--clippy-timeout` | 10.0 | Seconds for clippy linting |
+| `--clippy-required` | False | Lint failures block completion |
+| `--require-sandbox` | False | Firejail required (no fallback) |
+| `--n_workers` | 24 | Parallel workers |
+| `--k` | "1,10,100" | pass@k values to compute |
+
+See [ADR-008](../adr/ADR-008-separate-timeout-budgets.md) for timeout budget rationale.
 
 ### 5. Monitor Progress
 

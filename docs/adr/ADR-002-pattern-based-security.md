@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-011](ADR-011-context-aware-security-filtering.md) (v2: context-aware filtering)
 
 ## Context
 
@@ -114,5 +114,6 @@ Rely entirely on Firejail without pattern filtering.
 
 - [ADR-001](ADR-001-firejail-first-sandboxing.md) - Primary sandboxing mechanism
 - [ADR-006](ADR-006-unicode-homoglyph-protection.md) - Unicode bypass prevention
+- [ADR-011](ADR-011-context-aware-security-filtering.md) - **Successor: Context-aware filtering v2**
 - [human_eval/rust_execution.py](../../human_eval/rust_execution.py) - Implementation
 

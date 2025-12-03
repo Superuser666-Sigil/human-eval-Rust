@@ -4,7 +4,7 @@ Logging configuration for HumanEval Rust evaluation.
 Provides structured logging setup for CLI and library usage.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import logging

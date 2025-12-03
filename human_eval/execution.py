@@ -4,7 +4,7 @@ Execution utilities for HumanEval Rust evaluation.
 Provides timeout handling, reliability guards, and correctness checking.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 # pyright: reportAttributeAccessIssue=false, reportArgumentType=false
@@ -32,7 +32,8 @@ def check_correctness(
 
     :param completion_id: an optional completion ID so we can match
         the results later even if execution finishes asynchronously.
-    :param sandbox_mode: Optional sandbox mode ("docker", "firejail", "none", or None for auto-detect)
+    :param sandbox_mode: Optional sandbox mode ("docker", "firejail", "none",
+        or None for auto-detect)
     :param enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
         Set to False for pure HumanEval compatibility without security filtering.
     """

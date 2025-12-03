@@ -212,8 +212,19 @@ evaluate_functional_correctness samples.jsonl --k=1,5,10,20
 # Adjust parallelism (default: 24 workers optimized for H100)
 evaluate_functional_correctness samples.jsonl --n_workers=8
 
-# Custom timeout (default: 10.0s optimized for H100)
-evaluate_functional_correctness samples.jsonl --timeout=5.0
+# Custom timeout budgets (separate for compile/test/clippy phases)
+evaluate_functional_correctness samples.jsonl \
+    --compile-timeout=15.0 \
+    --run-timeout=10.0 \
+    --clippy-timeout=10.0
+
+# Clippy enforcement modes
+evaluate_functional_correctness samples.jsonl --clippy-required  # Lint failures block completion
+evaluate_functional_correctness samples.jsonl  # Default: advisory mode (metrics only)
+
+# Sandbox enforcement
+evaluate_functional_correctness samples.jsonl --require-sandbox  # Strict mode: Firejail required
+evaluate_functional_correctness samples.jsonl  # Default: fallback to unsandboxed
 
 # Sandboxing options
 evaluate_functional_correctness samples.jsonl --sandbox-mode=firejail  # Recommended
@@ -343,9 +354,14 @@ Each evaluation result includes enhanced fields for trust and auditability:
 
 **Error Types:**
 - `infra_missing_toolchain`: Infrastructure failure (rustc not available)
+- `infra_missing_linter`: Clippy not available or failed infrastructure checks
 - `compile_error`: Code failed to compile
+- `compile_timeout`: Compilation exceeded time budget
 - `runtime_error`: Code compiled but crashed during execution
+- `test_timeout`: Test execution exceeded time budget
 - `assertion_failure`: Tests failed (code ran but assertions failed)
+- `clippy_timeout`: Clippy linting exceeded time budget
+- `lint_failure`: Clippy found code quality issues (when `--clippy-required` is enabled)
 
 **Preflight Checks:**
 - Validates `rustc` availability before evaluation (fails fast on infrastructure issues)
@@ -359,15 +375,32 @@ Version 2.0.0+ includes optimizations specifically tuned for high-performance GP
 
 ### Default Configuration
 - **Parallel Workers**: 24 (default `--n_workers=24`) - Optimized to saturate 26 vCPUs (reserving 2 for OS/orchestration)
-- **Timeout**: 10.0 seconds (default `--timeout=10.0`) - Increased from 3.0s to handle compilation latency on loaded systems
+- **Timeout Budgets**: 10.0 seconds per phase (compile/run/clippy) - Separate budgets ensure fair evaluation
+  - `--compile-timeout=10.0` - Default for rustc compilation
+  - `--run-timeout=10.0` - Default for test execution
+  - `--clippy-timeout=10.0` - Default for linting
 - **Firejail Memory Limit**: 4GB per process - Handles complex, macro-heavy Rust code compilation
+
+### H100 Performance Tuning
+For faster evaluation on high-end hardware, reduce timeout budgets:
+```bash
+evaluate_functional_correctness samples.jsonl \
+    --n_workers=32 \
+    --compile-timeout=5.0 \
+    --run-timeout=5.0 \
+    --clippy-timeout=5.0
+```
+
+This configuration achieves ~200 samples/minute vs ~150 samples/minute with default 10s timeouts.
 
 ### Resource Usage
 With 24 workers and 4GB memory per process:
 - **Maximum Memory Usage**: ~96GB (24 workers × 4GB) - Well within 225GB safety margin
 - **CPU Utilization**: ~92% (24/26 vCPUs) - Near-saturation for maximum throughput
 
-These defaults are optimized for production evaluation on high-end hardware. For smaller systems, you can override with `--n_workers` and `--timeout` flags.
+These defaults are optimized for production evaluation on high-end hardware. For smaller systems, you can override with `--n_workers` and timeout flags.
+
+See [ADR-008](docs/adr/ADR-008-separate-timeout-budgets.md) for timeout budget design rationale.
 
 ## Version 2.0.0 Breaking Changes
 

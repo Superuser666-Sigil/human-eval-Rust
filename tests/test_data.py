@@ -200,16 +200,23 @@ class TestGetHumanEvalDataset:
 
 
 class TestRootPath:
-    """Test ROOT path constant."""
+    """Test dataset path resolution."""
 
-    def test_root_is_directory(self) -> None:
-        """Test that ROOT points to a directory."""
-        root = Path(data.ROOT)
-        assert root.exists()
-        assert root.is_dir()
+    def test_get_human_eval_dataset_returns_path(self) -> None:
+        """Test that get_human_eval_dataset returns a valid path string."""
+        path_str = data.get_human_eval_dataset()
+        assert isinstance(path_str, str)
+        assert len(path_str) > 0
 
-    def test_human_eval_rust_path(self) -> None:
-        """Test HUMAN_EVAL_RUST path."""
-        path = Path(data.HUMAN_EVAL_RUST)
-        # Path should be valid (may or may not exist depending on installation)
-        assert isinstance(data.HUMAN_EVAL_RUST, str)
+    def test_dataset_path_accessible(self) -> None:
+        """Test that dataset path points to accessible location."""
+        # This tests the new importlib.resources approach
+        try:
+            path_str = data.get_human_eval_dataset()
+            path = Path(path_str)
+            # In development, file may exist; in installed wheel, may be extracted
+            # Just verify we got a reasonable path
+            assert path.name == "HumanEval_rust.jsonl"
+        except Exception as e:
+            # If importlib.resources fails, that's a packaging issue to fix
+            pytest.fail(f"Failed to get dataset path: {e}")

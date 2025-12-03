@@ -21,16 +21,38 @@ Guide for running evaluations on production workloads (thousands of samples, mul
 | vCPUs | 26 |
 | RAM | 225 GB |
 | Workers | 24 (default) |
-| Timeout | 10s (default) |
+| Compile Timeout | 5s (tuned for H100) |
+| Run Timeout | 5s (tuned for H100) |
+| Clippy Timeout | 5s (tuned for H100) |
 | Memory per worker | ~4 GB |
+
+**H100-optimized command:**
+```bash
+evaluate_functional_correctness samples.jsonl \
+    --n_workers=24 \
+    --compile-timeout=5.0 \
+    --run-timeout=5.0 \
+    --clippy-timeout=5.0
+```
+
+See [ADR-008](../adr/ADR-008-separate-timeout-budgets.md) for timeout budget tuning rationale.
 
 ### Smaller Systems
 
-| System | Workers | Timeout |
-|--------|---------|---------|
-| 16 cores, 32 GB RAM | 12 | 10s |
-| 8 cores, 16 GB RAM | 6 | 15s |
-| 4 cores, 8 GB RAM | 2 | 30s |
+| System | Workers | Compile Timeout | Run Timeout | Notes |
+|--------|---------|----------------|-------------|-------|
+| 16 cores, 32 GB RAM | 12 | 10s | 10s | Standard configuration |
+| 8 cores, 16 GB RAM | 6 | 15s | 15s | Slower hardware needs more time |
+| 4 cores, 8 GB RAM | 2 | 30s | 30s | Minimal setup, expect slow evaluation |
+
+**Example for 8-core system:**
+```bash
+evaluate_functional_correctness samples.jsonl \
+    --n_workers=6 \
+    --compile-timeout=15.0 \
+    --run-timeout=15.0 \
+    --clippy-timeout=15.0
+```
 
 ---
 
@@ -77,10 +99,12 @@ evaluate_functional_correctness samples.jsonl --n_workers=24
 ### 4. Run with Monitoring
 
 ```bash
-# In one terminal: run evaluation
+# In one terminal: run evaluation with separate timeout budgets
 evaluate_functional_correctness samples.jsonl \
     --n_workers=24 \
-    --timeout=10.0 \
+    --compile-timeout=10.0 \
+    --run-timeout=10.0 \
+    --clippy-timeout=10.0 \
     --sandbox-mode=firejail
 
 # In another terminal: monitor
@@ -91,12 +115,14 @@ watch -n 5 'free -h'
 ### 5. Handle Chunks (if split)
 
 ```bash
-# Process each chunk
+# Process each chunk with consistent timeout budgets
 for chunk in samples_chunk_*.jsonl; do
     echo "Processing $chunk..."
     evaluate_functional_correctness "$chunk" \
         --n_workers=24 \
-        --timeout=10.0
+        --compile-timeout=10.0 \
+        --run-timeout=10.0 \
+        --clippy-timeout=10.0
 done
 
 # Combine results
@@ -208,22 +234,30 @@ cp samples.jsonl_results.jsonl /original/path/
 
 ## Expected Performance
 
-| Configuration | Throughput |
-|--------------|------------|
-| H100, 24 workers, 10s timeout | ~150 samples/min |
-| 16 cores, 12 workers, 10s timeout | ~75 samples/min |
-| 8 cores, 6 workers, 15s timeout | ~30 samples/min |
+| Configuration | Throughput | Notes |
+|--------------|------------|-------|
+| H100, 24 workers, 5s timeouts | ~200 samples/min | Optimized for fast hardware |
+| H100, 24 workers, 10s timeouts | ~150 samples/min | Conservative tuning |
+| 16 cores, 12 workers, 10s timeouts | ~75 samples/min | Standard server |
+| 8 cores, 6 workers, 15s timeouts | ~30 samples/min | Developer workstation |
+
+**Note:** Since v2.5.0, throughput benefits from separate timeout budgets. Fast compiles don't wait for slow test budgets. See [ADR-008](../adr/ADR-008-separate-timeout-budgets.md).
 
 ### Full HumanEval Timing
 
-164 problems × k samples per problem:
+164 problems × k samples per problem (H100 with 5s timeouts):
 
-| k | Total Samples | H100 Time |
-|---|---------------|-----------|
-| 1 | 164 | ~1 min |
-| 10 | 1,640 | ~11 min |
-| 100 | 16,400 | ~110 min |
-| 200 | 32,800 | ~220 min |
+| k | Total Samples | H100 Time (5s) | H100 Time (10s) |
+|---|---------------|----------------|-----------------|
+| 1 | 164 | ~0.8 min | ~1 min |
+| 10 | 1,640 | ~8 min | ~11 min |
+| 100 | 16,400 | ~80 min | ~110 min |
+| 200 | 32,800 | ~165 min | ~220 min |
+
+**Tuning recommendations:**
+- **H100/fast hardware:** Use 5s budgets for 30% speedup
+- **Standard servers:** Use 10s budgets for reliability
+- **Slow hardware:** Use 15-30s budgets to avoid false timeouts
 
 ---
 

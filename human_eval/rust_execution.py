@@ -4,7 +4,7 @@ Rust-specific execution module for HumanEval evaluation.
 Handles compilation and test execution of Rust code completions with sandboxing support.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 """
 
 import multiprocessing
@@ -16,7 +16,7 @@ import time
 import unicodedata
 
 # Use relative import to avoid circular dependency with execution.py
-from .execution import TimeoutException, create_tempdir, reliability_guard, time_limit
+from .execution import create_tempdir, reliability_guard
 
 # Try to import sandbox module (optional)
 try:
@@ -204,7 +204,7 @@ DISALLOWED_COMPLETION_PATTERNS = [
     "std::time::SystemTime",
     "std::time::UNIX_EPOCH",
     "std::time::Duration",
-    "std::time::Instant",
+    # Note: std::time::Instant is allowed for benchmarking
     # External process execution
     "std::os",
     "std::os::unix",
@@ -257,11 +257,49 @@ DISALLOWED_COMPLETION_PATTERNS = [
     "build.rs",
     # Proc macros
     "proc_macro",
-    "#[derive(",
+    # Note: #[derive( is checked separately to allow safe derives
     # Additional dangerous patterns
     "std::intrinsics",
     "core::intrinsics",
 ]
+
+# Safe derive macros that are allowed
+SAFE_DERIVE_MACROS = {
+    "Debug", "Clone", "Copy", "PartialEq", "Eq", "PartialOrd", "Ord",
+    "Hash", "Default", "Display"
+}
+
+
+def _strip_comments_and_strings(code: str) -> str:
+    """Strip comments and string literals from Rust code for security checking.
+    
+    This prevents false positives from doc comments and string literals
+    that contain keywords.
+    
+    Args:
+        code: Rust source code
+    
+    Returns:
+        Code with comments and strings replaced with whitespace
+    """
+    import re
+    
+    # Strip line comments (// ...)
+    code = re.sub(r"//[^\n]*", "", code)
+    
+    # Strip block comments (/* ... */)
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.DOTALL)
+    
+    # Strip string literals (both "..." and r"..." raw strings)
+    # This is simplified - handles most common cases
+    code = re.sub(r'r#*"(?:[^"\\]|\\.)*"#*', '""', code)
+    code = re.sub(r'"(?:[^"\\]|\\.)*"', '""', code)
+    
+    # Strip char literals
+    code = re.sub(r"'(?:[^'\\]|\\.)*'", "''", code)
+    
+    return code
+
 
 # Homoglyph mapping for characters that NFKD doesn't normalize to ASCII
 # These are visually similar to ASCII letters but aren't decomposed by Unicode normalization
@@ -329,14 +367,41 @@ def _normalize_unicode(text: str) -> str:
 
 
 def _sanitize_rust_completion(completion: str) -> str | None:
-    """Check for disallowed patterns with Unicode normalization."""
-
+    """Check for disallowed patterns with Unicode normalization.
+    
+    Strips comments and string literals before checking to avoid false positives
+    from documentation and example code.
+    """
+    # First normalize Unicode to prevent homoglyph attacks
     normalized = _normalize_unicode(completion.lower())
-
+    
+    # Strip comments and strings from the normalized version for pattern checking
+    # This prevents false positives from doc comments like "/// Example using std::fs"
+    stripped = _strip_comments_and_strings(normalized)
+    
+    # Check for disallowed patterns in the stripped code
     for pattern in DISALLOWED_COMPLETION_PATTERNS:
-        if pattern.lower() in normalized:
+        if pattern.lower() in stripped:
             return f"disallowed usage of {pattern}"
-
+    
+    # Special check for #[derive( - only block if it contains unsafe traits
+    # Allow safe derives like #[derive(Debug, Clone)]
+    derive_pattern = r"#\[derive\s*\(([^)]+)\)"
+    for match in re.finditer(derive_pattern, stripped, re.IGNORECASE):
+        derives = match.group(1)
+        # Parse the comma-separated list of derives
+        derive_list = [d.strip() for d in derives.split(',')]
+        # Check if any derive is not in the safe list
+        for derive in derive_list:
+            # Remove any paths (e.g., serde::Deserialize -> Deserialize)
+            derive_name = derive.split('::')[-1].strip()
+            if derive_name and derive_name not in SAFE_DERIVE_MACROS:
+                # Check if it looks dangerous (contains keywords like unsafe, arbitrary)
+                dangerous_keywords = ['unsafe', 'arbitrary', 'deserialize', 'serialize']
+                if any(kw in derive_name.lower() for kw in dangerous_keywords):
+                    return f"disallowed derive macro: {derive_name}"
+    
+    # Check for dangerous patterns in raw strings (still check original, not stripped)
     if re.search(
         r"r#*\".*?(unsafe|std::fs|std::process).*?\"#*",
         completion,
@@ -374,6 +439,150 @@ def _validate_completion(completion: str) -> str | None:
     return None
 
 
+def _strip_markdown_code_blocks(completion: str) -> str:
+    """Remove markdown code blocks from completion."""
+    if "```rust" in completion:
+        rust_match = re.search(r"```rust\s*(.*?)\s*```", completion, re.DOTALL)
+        if rust_match:
+            return rust_match.group(1)
+    elif "```" in completion:
+        code_match = re.search(r"```[^\n]*\s*(.*?)\s*```", completion, re.DOTALL)
+        if code_match:
+            return code_match.group(1)
+    return completion
+
+
+def _strip_leading_attributes(completion: str) -> str:
+    """Remove leading attribute lines (starting with #[) from completion."""
+    stripped_lines = []
+    for line in completion.split('\n'):
+        stripped_line = line.strip()
+        if stripped_line.startswith('#[') and not stripped_line.startswith('#!['):
+            continue
+        stripped_lines.append(line)
+    return '\n'.join(stripped_lines)
+
+
+def _find_matching_brace(text: str, start_pos: int) -> int | None:
+    """Find the position after the matching closing brace starting from start_pos.
+    
+    Returns the position after the closing brace, or None if not found.
+    """
+    brace_count = 0
+    for i in range(start_pos, len(text)):
+        if text[i] == "{":
+            brace_count += 1
+        elif text[i] == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                return i + 1
+    return None
+
+
+def _extract_target_function_body(text: str, entry_point: str) -> str | None:
+    """Try to extract the body of a specific function by name.
+    
+    Returns the function body if found, None otherwise.
+    """
+    escaped_entry = re.escape(entry_point)
+    
+    # Try with DOTALL to handle multiline signatures
+    fn_pattern = (
+        rf"fn\s+{escaped_entry}\s*<[^>]*>?\s*\([^)]*\)\s*"
+        rf"(?:->\s*[^{{}}where]+)?\s*(?:where\s+[^{{}}]+)?\s*\{{"
+    )
+    fn_match = re.search(fn_pattern, text, re.MULTILINE | re.DOTALL)
+    
+    if not fn_match:
+        # Fallback to simpler pattern without where clause handling
+        not_brace_pattern = r"[^{]"
+        fn_pattern = rf"fn\s+{escaped_entry}\s*\([^)]*\)\s*(?:->{not_brace_pattern}*)?\s*\{{"
+        fn_match = re.search(fn_pattern, text, re.MULTILINE | re.DOTALL)
+
+    if fn_match:
+        start_pos = fn_match.end() - 1  # Position of opening brace
+        end_pos = _find_matching_brace(text, start_pos)
+        if end_pos is not None:
+            return text[start_pos + 1 : end_pos - 1].strip()
+    
+    return None
+
+
+def _extract_body_from_braces(text: str) -> str | None:
+    """Extract content from text that starts with a brace block.
+    
+    Returns the content between braces if found, None otherwise.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return None
+    
+    brace_count = 0
+    start_pos = 0
+    
+    for i, char in enumerate(stripped):
+        if char == "{":
+            if brace_count == 0:
+                start_pos = i + 1
+            brace_count += 1
+        elif char == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                return stripped[start_pos:i].strip()
+
+    # If we didn't find a matching brace, return everything after the first {
+    if brace_count > 0:
+        return stripped[start_pos:].strip()
+    
+    return None
+
+
+def _remove_main_functions(text: str) -> str:
+    """Remove standalone main() functions from code."""
+    lines = text.split("\n")
+    cleaned_lines = []
+    in_main = False
+    brace_count = 0
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if re.match(r"^fn\s+main\s*\([^)]*\)\s*(?:->[^{]*)?\s*\{", stripped):
+            in_main = True
+            brace_count = 1
+            i += 1
+            while i < len(lines) and brace_count > 0:
+                line = lines[i]
+                brace_count += line.count("{") - line.count("}")
+                i += 1
+            continue
+
+        if in_main:
+            brace_count += line.count("{") - line.count("}")
+            if brace_count <= 0:
+                in_main = False
+            i += 1
+            continue
+
+        cleaned_lines.append(line)
+        i += 1
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def _clean_extra_patterns(text: str) -> str:
+    """Remove common extra patterns like example usage blocks."""
+    result = re.sub(
+        r"(?i)(//\s*)?(example\s+usage|usage\s+example):.*", "", text, flags=re.DOTALL
+    )
+    result = re.sub(
+        r"^use\s+std::collections::Vec;?\s*$", "", result, flags=re.MULTILINE
+    )
+    return result.strip()
+
+
 def _extract_function_body(completion: str, entry_point: str) -> str:
     """
     Extract the function body from a completion, removing extra code like main() functions.
@@ -385,126 +594,27 @@ def _extract_function_body(completion: str, entry_point: str) -> str:
     Returns:
         Cleaned completion with only the target function body
     """
-    import re
-
     # Step 1: Remove markdown code blocks
-    if "```rust" in completion:
-        # Extract content between ```rust and ```
-        rust_match = re.search(r"```rust\s*(.*?)\s*```", completion, re.DOTALL)
-        if rust_match:
-            completion = rust_match.group(1)
-    elif "```" in completion:
-        # Generic code block
-        code_match = re.search(r"```[^\n]*\s*(.*?)\s*```", completion, re.DOTALL)
-        if code_match:
-            completion = code_match.group(1)
+    completion = _strip_markdown_code_blocks(completion).strip()
 
-    completion = completion.strip()
+    # Step 2: Strip leading attributes
+    current_completion = _strip_leading_attributes(completion)
+    
+    # Step 3: Try to find the target function
+    body = _extract_target_function_body(current_completion, entry_point)
+    if body is not None:
+        return body
 
-    # Step 2: Try to find the function that matches entry_point
-    # Pattern: fn entry_point(...) -> ... { ... }
-    # Note: Construct pattern carefully to avoid f-string bracket issues
-    # The pattern matches: fn entry_point(...) -> [anything except {] { ... }
-    not_brace_pattern = r"[^{]"  # Match any character except opening brace
-    fn_pattern = rf"fn\s+{re.escape(entry_point)}\s*\([^)]*\)\s*(?:->{not_brace_pattern}*)?\s*\{{"
-    fn_match = re.search(fn_pattern, completion, re.MULTILINE | re.DOTALL)
+    # Step 4: Check if completion is just a brace-enclosed body
+    body = _extract_body_from_braces(current_completion)
+    if body is not None:
+        return body
 
-    if fn_match:
-        # Found the target function, extract from the opening brace
-        start_pos = fn_match.end() - 1  # Position of opening brace
-        brace_count = 0
-        end_pos = start_pos
+    # Step 5: Remove main() functions and clean up
+    result = _remove_main_functions(current_completion)
+    result = _clean_extra_patterns(result)
 
-        # Find matching closing brace
-        for i in range(start_pos, len(completion)):
-            if completion[i] == "{":
-                brace_count += 1
-            elif completion[i] == "}":
-                brace_count -= 1
-                if brace_count == 0:
-                    end_pos = i + 1
-                    break
-
-        if brace_count == 0:
-            # Extract just the function body (without the function signature)
-            # The prompt already has the signature, we just need the body
-            function_body = completion[start_pos + 1 : end_pos - 1].strip()
-            return function_body
-
-    # Step 2b: If completion is just the function body (no signature), check if it starts with {
-    # This handles cases where the model generates just the body
-    if completion.strip().startswith("{"):
-        # Extract content between first { and matching }
-        brace_count = 0
-        start_pos = 0
-        end_pos = len(completion)
-
-        for i, char in enumerate(completion):
-            if char == "{":
-                if brace_count == 0:
-                    start_pos = i + 1
-                brace_count += 1
-            elif char == "}":
-                brace_count -= 1
-                if brace_count == 0:
-                    end_pos = i
-                    return completion[start_pos:end_pos].strip()
-
-        # If we didn't find a matching brace, return everything after the first {
-        if brace_count > 0:
-            return completion[start_pos:].strip()
-
-    # Step 3: If we didn't find the target function, try to extract any function body
-    # and remove main() functions
-    lines = completion.split("\n")
-    cleaned_lines = []
-    in_main = False
-    brace_count = 0
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-
-        # Skip standalone main() functions
-        if re.match(r"^fn\s+main\s*\([^)]*\)\s*(?:->[^{]*)?\s*\{", stripped):
-            in_main = True
-            brace_count = 1
-            # Skip until matching closing brace
-            i += 1
-            while i < len(lines) and brace_count > 0:
-                line = lines[i]
-                brace_count += line.count("{") - line.count("}")
-                i += 1
-            continue
-
-        # Skip lines that are part of a main() function we're skipping
-        if in_main:
-            brace_count += line.count("{") - line.count("}")
-            if brace_count <= 0:
-                in_main = False
-            i += 1
-            continue
-
-        # Keep other lines
-        cleaned_lines.append(line)
-        i += 1
-
-    result = "\n".join(cleaned_lines).strip()
-
-    # Step 4: Remove common extra patterns
-    # Remove "Example usage:" or "// Example usage:" blocks
-    result = re.sub(
-        r"(?i)(//\s*)?(example\s+usage|usage\s+example):.*", "", result, flags=re.DOTALL
-    )
-
-    # Remove standalone use statements that aren't needed (keep them if they're at the top)
-    # This is tricky, so we'll be conservative and only remove obviously wrong ones
-    result = re.sub(
-        r"^use\s+std::collections::Vec;?\s*$", "", result, flags=re.MULTILINE
-    )  # Vec is in std::vec, not collections
-
-    return result.strip()
+    return result
 
 
 def _check_rustc_available(sandbox_mode: str | None = None) -> tuple[bool, str | None]:
@@ -551,16 +661,53 @@ def check_main_free(completion: str) -> bool:
 
 
 def _run_clippy_check(source_path: str, timeout: float) -> tuple[bool, str]:
-    """Run clippy on compiled code and return (passed, warnings)."""
+    """Run clippy on compiled code and return (passed, warnings).
+    
+    Creates a minimal Cargo.toml if one doesn't exist to enable clippy checking
+    in temporary directories.
+    """
+    source_dir = os.path.dirname(source_path)
+    cargo_toml_path = os.path.join(source_dir, "Cargo.toml")
+    
+    # Check if Cargo.toml exists, create minimal one if not
+    created_cargo_toml = False
+    if not os.path.exists(cargo_toml_path):
+        # Create minimal Cargo.toml for clippy checking
+        source_filename = os.path.basename(source_path)
+        binary_name = os.path.splitext(source_filename)[0]
+        
+        minimal_cargo_toml = f'''[package]
+name = "temp_eval"
+version = "0.1.0"
+edition = "2021"
 
-    result = subprocess.run(
-        ["cargo", "clippy", "--", "-D", "warnings"],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=os.path.dirname(source_path),
-    )
-    return result.returncode == 0, result.stderr
+[[bin]]
+name = "{binary_name}"
+path = "{source_filename}"
+'''
+        try:
+            with open(cargo_toml_path, "w", encoding="utf-8") as f:
+                f.write(minimal_cargo_toml)
+            created_cargo_toml = True
+        except OSError as e:
+            return False, f"infra: failed to create Cargo.toml: {e}"
+    
+    try:
+        result = subprocess.run(
+            ["cargo", "clippy", "--", "-D", "warnings"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=source_dir,
+        )
+        return result.returncode == 0, result.stderr
+    finally:
+        # Clean up created Cargo.toml
+        if created_cargo_toml and os.path.exists(cargo_toml_path):
+            try:
+                os.remove(cargo_toml_path)
+            except OSError:
+                pass  # Best effort cleanup
 
 
 class ReliabilityContext:
@@ -699,7 +846,6 @@ class ReliabilityContext:
                 sys.modules.pop(mod_name, None)
             else:
                 # Restore original value (could be None or actual module)
-                from types import ModuleType
                 sys.modules[mod_name] = original  # type: ignore[assignment]
 
 
@@ -715,6 +861,129 @@ DETERMINISTIC_RUSTC_FLAGS = [
 ]
 
 
+def _compile_rust_code(
+    source_path: str,
+    test_binary: str,
+    compile_args: list[str],
+    compile_timeout: float,
+    use_sandbox: bool,
+    sandbox_mode: str | None,
+) -> tuple[subprocess.CompletedProcess, float]:
+    """Compile Rust code with or without sandbox.
+    
+    Returns:
+        Tuple of (compile_result, compile_time_seconds)
+    """
+    start_time = time.perf_counter()
+    
+    if use_sandbox:
+        compile_result = run_rustc_sandboxed(
+            source_path,
+            test_binary,
+            compile_args,
+            timeout=compile_timeout,
+            capture_output=True,
+            sandbox_mode=sandbox_mode,
+        )
+    else:
+        compile_result = subprocess.run(
+            ["rustc"] + compile_args + [source_path, "-o", test_binary],
+            capture_output=True,
+            text=True,
+            timeout=compile_timeout,
+        )
+    
+    compile_time = time.perf_counter() - start_time
+    return compile_result, compile_time
+
+
+def _run_clippy_phase(
+    source_path: str,
+    clippy_timeout: float,
+    clippy_required: bool,
+    result_dict: dict,
+) -> bool:
+    """Run clippy check and update result_dict.
+    
+    Returns:
+        True if should continue execution, False if should return early
+    """
+    if not shutil.which("cargo"):
+        if clippy_required:
+            result_dict["clippy_ok"] = False
+            result_dict["error_type"] = "infra_missing_linter"
+            result_dict["stderr"] = "cargo not found (required for clippy)"
+            result_dict["result"] = "failed: cargo not available"
+            return False
+        return True
+    
+    try:
+        clippy_ok, clippy_stderr = _run_clippy_check(source_path, clippy_timeout)
+        result_dict["clippy_ok"] = clippy_ok
+        
+        # Check if clippy stderr indicates infrastructure problem
+        is_infra_error = clippy_stderr and "infra:" in clippy_stderr
+        
+        if not clippy_ok and clippy_required:
+            if is_infra_error:
+                result_dict["error_type"] = "infra_missing_linter"
+                result_dict["stderr"] = clippy_stderr
+                result_dict["result"] = f"failed: {clippy_stderr}"
+            else:
+                result_dict["error_type"] = "lint_failure"
+                result_dict["stderr"] = clippy_stderr
+                result_dict["result"] = "failed: clippy check failed"
+            return False
+        elif not clippy_ok and not is_infra_error:
+            # Advisory mode: record but don't fail
+            result_dict["stderr"] = clippy_stderr
+            
+    except subprocess.TimeoutExpired:
+        result_dict["clippy_ok"] = False
+        if clippy_required:
+            result_dict["error_type"] = "clippy_timeout"
+            result_dict["stderr"] = "clippy check timed out"
+            result_dict["result"] = "failed: clippy timeout"
+            return False
+        else:
+            result_dict["stderr"] = "clippy check timed out (advisory)"
+            
+    except Exception as exc:  # noqa: BLE001
+        result_dict["clippy_ok"] = False
+        if clippy_required:
+            result_dict["error_type"] = "infra_missing_linter"
+            result_dict["stderr"] = str(exc)
+            result_dict["result"] = f"failed: clippy error: {exc}"
+            return False
+        else:
+            result_dict["stderr"] = str(exc)
+    
+    return True
+
+
+def _run_test_binary(
+    test_binary: str,
+    run_timeout: float,
+    use_sandbox: bool,
+    sandbox_mode: str | None,
+) -> subprocess.CompletedProcess:
+    """Execute the test binary with or without sandbox."""
+    if use_sandbox:
+        return run_binary_sandboxed(
+            test_binary,
+            timeout=run_timeout,
+            capture_output=True,
+            sandbox_mode=sandbox_mode,
+        )
+    else:
+        return subprocess.run(
+            [test_binary],
+            capture_output=True,
+            text=True,
+            timeout=run_timeout,
+        )
+
+
 def _rust_unsafe_execute(
     problem: dict,
     completion: str,
@@ -722,14 +991,34 @@ def _rust_unsafe_execute(
     result,
     sandbox_mode: str | None = None,
     enforce_policy: bool = True,
+    compile_timeout: float | None = None,
+    run_timeout: float | None = None,
+    clippy_timeout: float | None = None,
+    clippy_required: bool = False,
 ):
     """
     Execute Rust code and return enhanced result schema.
+    
+    Args:
+        problem: Problem dictionary with prompt, test, etc.
+        completion: Generated code completion
+        timeout: Default timeout in seconds (used if specific timeouts not provided)
+        result: List to append result dict to
+        sandbox_mode: Optional sandbox mode ("firejail", "none", or None for auto-detect)
+        enforce_policy: Whether to enforce pattern-based policy filtering
+        compile_timeout: Timeout for compilation phase (defaults to timeout)
+        run_timeout: Timeout for test execution phase (defaults to timeout)
+        clippy_timeout: Timeout for clippy check (defaults to compile_timeout)
+        clippy_required: Whether clippy passing is required for completion to pass (default: False)
+    
     Result dict structure:
     {
         "compile_ok": bool | None,
         "test_ok": bool | None,
-        "error_type": str | None,  # "infra_missing_toolchain" | "compile_error" | "runtime_error" | "assertion_failure"
+        "error_type": str | None,
+            # One of: "infra_missing_toolchain", "compile_error", "runtime_error",
+            # "assertion_failure", "compile_timeout", "test_timeout",
+            # "clippy_timeout", "lint_failure", "infra_missing_linter"
         "stderr": str,
         "passed": bool,
         "main_free": bool,
@@ -741,7 +1030,20 @@ def _rust_unsafe_execute(
     1. Rust code doesn't have access to Python's os/subprocess modules
     2. We need those modules to compile and execute the Rust binary
     3. Sandbox isolation is handled via firejail or other sandbox modes
+    
+    Timeout behavior:
+    - Each phase (compile, clippy, test) has its own dedicated timeout budget
+    - If phase-specific timeouts are not provided, they default to the main timeout
+    - A process watchdog monitors total execution time with 2 second grace period
     """
+    # Set default timeouts
+    if compile_timeout is None:
+        compile_timeout = timeout
+    if run_timeout is None:
+        run_timeout = timeout
+    if clippy_timeout is None:
+        clippy_timeout = compile_timeout
+    
     with create_tempdir() as temp_dir:
         result_dict = {
             "compile_ok": None,
@@ -795,107 +1097,74 @@ def _rust_unsafe_execute(
             source_file.write("\n")
 
         compile_args = DETERMINISTIC_RUSTC_FLAGS.copy()
-
         effective_mode = sandbox_mode
         use_sandbox = SANDBOX_AVAILABLE and effective_mode != "none"
 
-        timed_out = None
         try:
-            with time_limit(timeout) as timed_out_event:
-                timed_out = timed_out_event
-                start_time = time.perf_counter()
-                if use_sandbox:
-                    try:
-                        compile_result = run_rustc_sandboxed(
-                            source_path,
-                            test_binary,
-                            compile_args,
-                            timeout=timeout,
-                            capture_output=True,
-                            sandbox_mode=effective_mode,
-                        )
-                    except SandboxError as e:
-                        result_dict["error_type"] = "infra_missing_toolchain"
-                        result_dict["stderr"] = str(e)
-                        result_dict["result"] = f"failed: sandbox error: {e}"
-                        result.append(result_dict)
-                        return
-                else:
-                    compile_result = subprocess.run(
-                        ["rustc"] + compile_args + [source_path, "-o", test_binary],
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
-
-                result_dict["compile_time_ms"] = int(
-                    (time.perf_counter() - start_time) * 1000
+            # Compile phase
+            try:
+                compile_result, compile_time = _compile_rust_code(
+                    source_path, test_binary, compile_args,
+                    compile_timeout, use_sandbox, effective_mode
                 )
-                result_dict["compile_ok"] = compile_result.returncode == 0
-                if compile_result.returncode != 0:
-                    failure = (
-                        compile_result.stderr.strip() or compile_result.stdout.strip()
-                    )
-                    result_dict["error_type"] = "compile_error"
-                    result_dict["stderr"] = failure or "compile error"
-                    result_dict["result"] = f"failed: {result_dict['stderr']}"
-                    result.append(result_dict)
-                    return
+            except SandboxError as e:
+                result_dict["error_type"] = "infra_missing_toolchain"
+                result_dict["stderr"] = str(e)
+                result_dict["result"] = f"failed: sandbox error: {e}"
+                result.append(result_dict)
+                return
 
-                if os.path.exists(test_binary):
-                    result_dict["binary_size_bytes"] = os.path.getsize(test_binary)
+            result_dict["compile_time_ms"] = int(compile_time * 1000)
+            result_dict["compile_ok"] = compile_result.returncode == 0
+            
+            if compile_result.returncode != 0:
+                failure = compile_result.stderr.strip() or compile_result.stdout.strip()
+                result_dict["error_type"] = "compile_error"
+                result_dict["stderr"] = failure or "compile error"
+                result_dict["result"] = f"failed: {result_dict['stderr']}"
+                result.append(result_dict)
+                return
 
-                if shutil.which("cargo"):
-                    try:
-                        clippy_ok, clippy_stderr = _run_clippy_check(
-                            source_path, timeout
-                        )
-                        result_dict["clippy_ok"] = clippy_ok
-                        if not clippy_ok:
-                            result_dict["stderr"] = clippy_stderr
-                    except Exception as exc:  # noqa: BLE001
-                        result_dict["clippy_ok"] = False
-                        result_dict["stderr"] = str(exc)
+            if os.path.exists(test_binary):
+                result_dict["binary_size_bytes"] = os.path.getsize(test_binary)
 
-                if use_sandbox:
-                    try:
-                        test_result = run_binary_sandboxed(
-                            test_binary,
-                            timeout=timeout,
-                            capture_output=True,
-                            sandbox_mode=effective_mode,
-                        )
-                    except SandboxError as e:
-                        result_dict["error_type"] = "runtime_error"
-                        result_dict["stderr"] = str(e)
-                        result_dict["result"] = f"failed: sandbox error: {e}"
-                        result.append(result_dict)
-                        return
-                else:
-                    test_result = subprocess.run(
-                        [test_binary],
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
-                    )
+            # Clippy phase
+            if not _run_clippy_phase(source_path, clippy_timeout, clippy_required, result_dict):
+                result.append(result_dict)
+                return
 
-                if timed_out and timed_out.is_set():
-                    raise TimeoutException("Timed out!")
+            # Test execution phase
+            try:
+                test_result = _run_test_binary(
+                    test_binary, run_timeout, use_sandbox, effective_mode
+                )
+            except SandboxError as e:
+                result_dict["error_type"] = "runtime_error"
+                result_dict["stderr"] = str(e)
+                result_dict["result"] = f"failed: sandbox error: {e}"
+                result.append(result_dict)
+                return
 
-                result_dict["test_ok"] = test_result.returncode == 0
-                if test_result.returncode == 0:
-                    result_dict["passed"] = True
-                    result_dict["result"] = "passed"
-                else:
-                    failure = test_result.stderr.strip() or test_result.stdout.strip()
-                    result_dict["error_type"] = "assertion_failure"
-                    result_dict["stderr"] = failure or "tests failed"
-                    result_dict["result"] = f"failed: {result_dict['stderr']}"
+            result_dict["test_ok"] = test_result.returncode == 0
+            if test_result.returncode == 0:
+                result_dict["passed"] = True
+                result_dict["result"] = "passed"
+            else:
+                failure = test_result.stderr.strip() or test_result.stdout.strip()
+                result_dict["error_type"] = "assertion_failure"
+                result_dict["stderr"] = failure or "tests failed"
+                result_dict["result"] = f"failed: {result_dict['stderr']}"
 
-        except (TimeoutException, subprocess.TimeoutExpired):
-            result_dict["error_type"] = "runtime_error"
-            result_dict["stderr"] = "timeout"
-            result_dict["result"] = "timed out"
+        except subprocess.TimeoutExpired as e:
+            # Determine which phase timed out based on the command
+            if "rustc" in str(e.cmd):
+                result_dict["error_type"] = "compile_timeout"
+                result_dict["stderr"] = f"compilation timed out after {compile_timeout}s"
+                result_dict["result"] = "failed: compile timeout"
+            else:
+                result_dict["error_type"] = "test_timeout"
+                result_dict["stderr"] = f"test execution timed out after {run_timeout}s"
+                result_dict["result"] = "failed: test timeout"
         except BaseException as exc:  # noqa: BLE001
             result_dict["error_type"] = "runtime_error"
             result_dict["stderr"] = str(exc)
@@ -912,6 +1181,10 @@ def rust_check_correctness(
     completion_id: int | None = None,
     sandbox_mode: str | None = None,
     enforce_policy: bool = True,
+    compile_timeout: float | None = None,
+    run_timeout: float | None = None,
+    clippy_timeout: float | None = None,
+    clippy_required: bool = False,
 ) -> dict:
     """
     Evaluate a Rust completion by compiling and running its tests.
@@ -919,11 +1192,18 @@ def rust_check_correctness(
     Args:
         problem: Problem dictionary with prompt, test, etc.
         completion: Generated code completion
-        timeout: Timeout in seconds
+        timeout: Default timeout in seconds (used if phase timeouts not specified)
         completion_id: Optional completion ID for tracking
         sandbox_mode: Optional sandbox mode ("firejail", "none", or None for auto-detect)
         enforce_policy: Whether to enforce pattern-based policy filtering (default: True).
             Set to False for pure HumanEval compatibility without security filtering.
+        compile_timeout: Timeout for compilation phase (defaults to timeout)
+        run_timeout: Timeout for test execution phase (defaults to timeout) 
+        clippy_timeout: Timeout for clippy check (defaults to compile_timeout)
+        clippy_required: Whether clippy passing is required for completion to pass (default: False).
+            In advisory mode (False), clippy failures are recorded but don't fail the completion.
+            In required mode (True), clippy failures cause the completion to fail with
+            error_type="lint_failure".
 
     Returns:
         Dictionary with enhanced schema:
@@ -945,12 +1225,25 @@ def rust_check_correctness(
     try:
         result = manager.list()
 
+        # Set default timeouts for process watchdog calculation
+        effective_compile_timeout = compile_timeout if compile_timeout is not None else timeout
+        effective_run_timeout = run_timeout if run_timeout is not None else timeout
+        effective_clippy_timeout = (
+            clippy_timeout if clippy_timeout is not None else effective_compile_timeout
+        )
+        
+        # Process watchdog: total budget + grace period
+        watchdog_timeout = (
+            effective_compile_timeout + effective_run_timeout + effective_clippy_timeout + 2
+        )
+
         process = multiprocessing.Process(
             target=_rust_unsafe_execute,
-            args=(problem, completion, timeout, result, sandbox_mode, enforce_policy),
+            args=(problem, completion, timeout, result, sandbox_mode, enforce_policy, 
+                  compile_timeout, run_timeout, clippy_timeout, clippy_required),
         )
         process.start()
-        process.join(timeout=timeout + 1)
+        process.join(timeout=watchdog_timeout)
         if process.is_alive():
             process.kill()
             process.join()
@@ -960,10 +1253,10 @@ def rust_check_correctness(
                 "compile_ok": None,
                 "test_ok": None,
                 "error_type": "runtime_error",
-                "stderr": "process timeout",
+                "stderr": "process watchdog timeout",
                 "passed": False,
                 "main_free": check_main_free(completion),
-                "result": "timed out",
+                "result": "timed out: process watchdog",
             }
             result.append(result_dict)
 

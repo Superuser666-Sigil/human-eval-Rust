@@ -6,7 +6,7 @@ This script performs a one-time migration of existing HumanEval_rust.jsonl
 to use content-hash based task IDs and adds the new schema fields.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.4.0
+Version: 3.0.0
 
 Usage:
     python scripts/migrate_task_ids.py
@@ -28,11 +28,10 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from human_eval.sigil_ingest import (
+from human_eval.sigil_ingest import (  # noqa: E402
     compute_task_hash,
     format_task_id,
     detect_anti_patterns,
-    migrate_existing_task,
 )
 
 
@@ -278,7 +277,7 @@ def main() -> None:
         for task in migrated_tasks:
             f.write(json.dumps(task) + "\n")
     
-    print(f"\nMigration complete!")
+    print("\nMigration complete!")
     print(f"  Tasks migrated: {len(migrated_tasks)}")
     
     # Summary by category

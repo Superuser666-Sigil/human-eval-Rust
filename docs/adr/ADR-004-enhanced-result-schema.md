@@ -73,9 +73,14 @@ Implement an **enhanced result schema** with explicit fields for each failure mo
 
 **Error types:**
 - `infra_missing_toolchain`: rustc not available
+- `infra_missing_linter`: Clippy not available or failed infrastructure checks
 - `compile_error`: Code failed to compile
+- `compile_timeout`: Compilation exceeded time budget
 - `runtime_error`: Code crashed during execution
+- `test_timeout`: Test execution exceeded time budget
 - `assertion_failure`: Tests failed
+- `clippy_timeout`: Clippy linting exceeded time budget
+- `lint_failure`: Clippy found code quality issues (when `clippy_required=True`)
 
 ## Consequences
 
@@ -131,6 +136,8 @@ Write metrics to separate file from results.
 ## Related
 
 - [ADR-005](ADR-005-deterministic-compilation.md) - Reproducibility context
+- [ADR-008](ADR-008-separate-timeout-budgets.md) - Timeout error types
+- [ADR-009](ADR-009-clippy-integration-enforcement.md) - Clippy error types
 - [human_eval/rust_execution.py](../../human_eval/rust_execution.py) - Schema implementation
 - [human_eval/evaluation.py](../../human_eval/evaluation.py) - Metrics aggregation
 

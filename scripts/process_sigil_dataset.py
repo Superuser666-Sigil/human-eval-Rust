@@ -6,7 +6,7 @@ This script ingests data from sigil-pipeline output and transforms it into
 HumanEval-compatible benchmark tasks.
 
 Copyright (c) 2025 Dave Tofflemire, SigilDERG Project
-Version: 2.5.0
+Version: 3.0.0
 
 Usage:
     python scripts/process_sigil_dataset.py --input data/sigil_phase2_dataset.jsonl
@@ -21,19 +21,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from human_eval.sigil_ingest import SigilIngestor, CATEGORY_RATIOS
-from human_eval.workspace_scaffold import (
+from human_eval.sigil_ingest import SigilIngestor, CATEGORY_RATIOS  # noqa: E402
+from human_eval.workspace_scaffold import (  # noqa: E402
     scaffold_workspace,
     analyze_dependencies,
     prompt_for_dependencies,
     run_hardening,
-    DependencyDecision,
 )
 
 
@@ -173,6 +172,184 @@ def load_category_ratios(ratios_str: str | None) -> dict[str, float] | None:
         sys.exit(1)
 
 
+def process_dry_run(
+    ingestor: SigilIngestor,
+    input_file: Path,
+    codegen_only: bool,
+) -> None:
+    """Process tasks in dry-run mode without writing output."""
+    print("Dry run - not writing output")
+    counts = {"codegen": 0, "transform": 0, "fix": 0, "explain": 0}
+    tasks = []
+    
+    for sigil_task in ingestor.load_sigil_jsonl(input_file):
+        if codegen_only:
+            task = ingestor.extract_codegen_task(sigil_task)
+            if task:
+                counts["codegen"] += 1
+                tasks.append(task)
+        else:
+            for category, generator in [
+                ("codegen", ingestor.extract_codegen_task),
+                ("transform", ingestor.generate_transform_task),
+                ("fix", ingestor.generate_fix_task),
+                ("explain", ingestor.generate_explain_task),
+            ]:
+                task = generator(sigil_task)
+                if task:
+                    counts[category] += 1
+                    tasks.append(task)
+    
+    print(f"Would generate {sum(counts.values())} tasks:")
+    for cat, count in counts.items():
+        total = sum(counts.values())
+        pct = (count / total * 100) if total > 0 else 0
+        print(f"  {cat}: {count} ({pct:.1f}%)")
+
+
+def process_codegen_only(
+    ingestor: SigilIngestor,
+    input_file: Path,
+    output_file: Path,
+) -> dict[str, int]:
+    """Process tasks in codegen-only mode."""
+    tasks = []
+    counts = {"codegen": 0, "transform": 0, "fix": 0, "explain": 0}
+    
+    for sigil_task in ingestor.load_sigil_jsonl(input_file):
+        task = ingestor.extract_codegen_task(sigil_task)
+        if task:
+            counts["codegen"] += 1
+            tasks.append(task)
+    
+    # Write output JSONL
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8") as f:
+        for task in tasks:
+            f.write(json.dumps(task.to_dict()) + "\n")
+    
+    return counts
+
+
+def print_task_summary(
+    counts: dict[str, int],
+    enforce_ratios: bool,
+    category_ratios: dict[str, float] | None,
+) -> None:
+    """Print summary of generated tasks."""
+    total = sum(counts.values())
+    print(f"\nGenerated {total} tasks:")
+    for cat, count in counts.items():
+        pct = (count / total * 100) if total > 0 else 0
+        print(f"  {cat}: {count} ({pct:.1f}%)")
+    
+    if enforce_ratios:
+        print(f"\nTarget ratios enforced: {category_ratios or CATEGORY_RATIOS}")
+    else:
+        print(
+            "\nRatio enforcement disabled - all generated tasks included"
+        )
+
+
+def handle_workspace_scaffolding(
+    args: Any,
+    output_file: Path,
+) -> None:
+    """Handle workspace scaffolding and optional hardening."""
+    print(f"\nScaffolding workspace at: {args.scaffold_workspace}")
+    
+    # Load tasks from output file for scaffolding
+    task_dicts = []
+    with output_file.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                task_dicts.append(json.loads(line))
+    
+    # Analyze dependencies
+    print("\nAnalyzing external dependencies...")
+    analysis = analyze_dependencies(task_dicts)
+    
+    # Handle dependency decision
+    dependency_decision = None
+    if analysis.has_external_deps():
+        try:
+            dependency_decision = prompt_for_dependencies(
+                analysis,
+                auto_approve=args.auto_deps,
+                auto_reject=args.no_deps,
+            )
+        except KeyboardInterrupt:
+            print("\n\nAborted by user.")
+            sys.exit(1)
+    
+    # Create workspace
+    result = scaffold_workspace(
+        tasks=task_dicts,
+        output_dir=args.scaffold_workspace,
+        overwrite=False,
+        dependency_decision=dependency_decision,
+    )
+    
+    print(f"\n  Crates created: {result['crates_created']}")
+    print(f"  Crates skipped: {result['crates_skipped']}")
+    
+    if result.get("dependencies_added"):
+        print(f"  Dependencies added: {len(result['dependencies_added'])}")
+        for dep in result["dependencies_added"][:5]:
+            print(f"    • {dep}")
+        if len(result["dependencies_added"]) > 5:
+            remaining = len(result["dependencies_added"]) - 5
+            print(f"    ... and {remaining} more")
+    
+    if result.get("dependencies_skipped"):
+        print(
+            f"  Dependencies skipped: {len(result['dependencies_skipped'])}"
+        )
+    
+    if result["errors"]:
+        print(f"  Errors: {len(result['errors'])}")
+        for error in result["errors"][:5]:
+            print(f"    - {error}")
+        if len(result["errors"]) > 5:
+            print(f"    ... and {len(result['errors']) - 5} more")
+    
+    # Run hardening if requested
+    if args.run_hardening:
+        print("\n" + "=" * 60)
+        print("Running hardening pipeline...")
+        print("=" * 60)
+        
+        hardening_result = run_hardening(
+            args.scaffold_workspace,
+            apply_fmt=True,
+            skip_clippy=args.skip_clippy,
+            skip_tests=args.skip_tests,
+            verbose=True,
+        )
+        
+        print("\n" + hardening_result.format_report())
+        
+        if not hardening_result.all_passed:
+            print("\n[!] Some hardening steps failed. Review errors above.")
+            sys.exit(1)
+        else:
+            print("\n[OK] All hardening steps passed!")
+    else:
+        print("\nWorkspace created. Next steps:")
+        print(f"  cd {args.scaffold_workspace}")
+        print("  cargo fmt")
+        print("  cargo check --all --tests")
+        print(
+            "  cargo clippy --all --tests -- -D warnings "
+            "-W clippy::pedantic -W clippy::nursery"
+        )
+        print("  cargo test --all")
+        print(
+            "\nOr run with --run-hardening to execute all steps "
+            "automatically."
+        )
+
+
 def main() -> None:
     """Main entry point."""
     args = parse_args()
@@ -187,7 +364,12 @@ def main() -> None:
     
     # Use codegen-only ratios if flag set
     if args.codegen_only:
-        category_ratios = {"codegen": 1.0, "transform": 0.0, "fix": 0.0, "explain": 0.0}
+        category_ratios = {
+            "codegen": 1.0,
+            "transform": 0.0,
+            "fix": 0.0,
+            "explain": 0.0,
+        }
     
     if args.verbose:
         print(f"Input file: {args.input}")
@@ -204,179 +386,37 @@ def main() -> None:
     )
     
     # Count input tasks
-    input_count = 0
-    for _ in ingestor.load_sigil_jsonl(args.input):
-        input_count += 1
+    input_count = sum(1 for _ in ingestor.load_sigil_jsonl(args.input))
     
     if args.verbose:
         print(f"Found {input_count} tasks in input file")
         print()
     
+    # Handle dry run
     if args.dry_run:
-        print("Dry run - not writing output")
-        # Still process to validate
-        counts = {"codegen": 0, "transform": 0, "fix": 0, "explain": 0}
-        tasks = []
-        
-        for sigil_task in ingestor.load_sigil_jsonl(args.input):
-            if args.codegen_only:
-                task = ingestor.extract_codegen_task(sigil_task)
-                if task:
-                    counts["codegen"] += 1
-                    tasks.append(task)
-            else:
-                for category, generator in [
-                    ("codegen", ingestor.extract_codegen_task),
-                    ("transform", ingestor.generate_transform_task),
-                    ("fix", ingestor.generate_fix_task),
-                    ("explain", ingestor.generate_explain_task),
-                ]:
-                    task = generator(sigil_task)
-                    if task:
-                        counts[category] += 1
-                        tasks.append(task)
-        
-        print(f"Would generate {sum(counts.values())} tasks:")
-        for cat, count in counts.items():
-            pct = (count / sum(counts.values()) * 100) if sum(counts.values()) > 0 else 0
-            print(f"  {cat}: {count} ({pct:.1f}%)")
+        process_dry_run(ingestor, args.input, args.codegen_only)
         return
     
-    # Process all tasks using ingestor (with ratio enforcement by default)
+    # Process all tasks
     print(f"Processing {args.input}...")
-    
     enforce_ratios = not args.no_enforce_ratios and not args.codegen_only
     
     if args.codegen_only:
-        # Manual processing for codegen-only mode
-        tasks = []
-        counts = {"codegen": 0, "transform": 0, "fix": 0, "explain": 0}
-        
-        for sigil_task in ingestor.load_sigil_jsonl(args.input):
-            task = ingestor.extract_codegen_task(sigil_task)
-            if task:
-                counts["codegen"] += 1
-                tasks.append(task)
-        
-        # Write output JSONL
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with args.output.open("w", encoding="utf-8") as f:
-            for task in tasks:
-                f.write(json.dumps(task.to_dict()) + "\n")
+        counts = process_codegen_only(ingestor, args.input, args.output)
     else:
-        # Use process_all with ratio enforcement
         counts = ingestor.process_all(
             args.input,
             args.output,
             enforce_ratios=enforce_ratios,
         )
-        
-        # Load tasks back for scaffolding if needed
-        if args.scaffold_workspace:
-            tasks = []
-            with args.output.open("r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        tasks.append(json.loads(line))
     
-    total = sum(counts.values())
-    print(f"\nGenerated {total} tasks:")
-    for cat, count in counts.items():
-        pct = (count / total * 100) if total > 0 else 0
-        print(f"  {cat}: {count} ({pct:.1f}%)")
-    
-    if enforce_ratios:
-        print(f"\nTarget ratios enforced: {category_ratios or CATEGORY_RATIOS}")
-    else:
-        print("\nRatio enforcement disabled - all generated tasks included")
-    
+    # Print summary
+    print_task_summary(counts, enforce_ratios, category_ratios)
     print(f"\nOutput written to: {args.output}")
     
     # Scaffold workspace if requested
     if args.scaffold_workspace:
-        print(f"\nScaffolding workspace at: {args.scaffold_workspace}")
-        
-        # Load tasks from output file for scaffolding
-        task_dicts = []
-        with args.output.open("r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    task_dicts.append(json.loads(line))
-        
-        # Analyze dependencies
-        print("\nAnalyzing external dependencies...")
-        analysis = analyze_dependencies(task_dicts)
-        
-        # Handle dependency decision
-        dependency_decision = None
-        if analysis.has_external_deps():
-            try:
-                dependency_decision = prompt_for_dependencies(
-                    analysis,
-                    auto_approve=args.auto_deps,
-                    auto_reject=args.no_deps,
-                )
-            except KeyboardInterrupt:
-                print("\n\nAborted by user.")
-                sys.exit(1)
-        
-        # Create workspace
-        result = scaffold_workspace(
-            tasks=task_dicts,
-            output_dir=args.scaffold_workspace,
-            overwrite=False,
-            dependency_decision=dependency_decision,
-        )
-        
-        print(f"\n  Crates created: {result['crates_created']}")
-        print(f"  Crates skipped: {result['crates_skipped']}")
-        
-        if result.get("dependencies_added"):
-            print(f"  Dependencies added: {len(result['dependencies_added'])}")
-            for dep in result["dependencies_added"][:5]:
-                print(f"    • {dep}")
-            if len(result["dependencies_added"]) > 5:
-                print(f"    ... and {len(result['dependencies_added']) - 5} more")
-        
-        if result.get("dependencies_skipped"):
-            print(f"  Dependencies skipped: {len(result['dependencies_skipped'])}")
-        
-        if result["errors"]:
-            print(f"  Errors: {len(result['errors'])}")
-            for error in result["errors"][:5]:
-                print(f"    - {error}")
-            if len(result["errors"]) > 5:
-                print(f"    ... and {len(result['errors']) - 5} more")
-        
-        # Run hardening if requested
-        if args.run_hardening:
-            print("\n" + "=" * 60)
-            print("Running hardening pipeline...")
-            print("=" * 60)
-            
-            hardening_result = run_hardening(
-                args.scaffold_workspace,
-                apply_fmt=True,
-                skip_clippy=args.skip_clippy,
-                skip_tests=args.skip_tests,
-                verbose=True,
-            )
-            
-            print("\n" + hardening_result.format_report())
-            
-            if not hardening_result.all_passed:
-                print("\n[!] Some hardening steps failed. Review errors above.")
-                sys.exit(1)
-            else:
-                print("\n[OK] All hardening steps passed!")
-        else:
-            print("\nWorkspace created. Next steps:")
-            print(f"  cd {args.scaffold_workspace}")
-            print("  cargo fmt")
-            print("  cargo check --all --tests")
-            print("  cargo clippy --all --tests -- -D warnings -W clippy::pedantic -W clippy::nursery")
-            print("  cargo test --all")
-            print("\nOr run with --run-hardening to execute all steps automatically.")
+        handle_workspace_scaffolding(args, args.output)
 
 
 if __name__ == "__main__":
